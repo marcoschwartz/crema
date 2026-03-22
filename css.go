@@ -66,10 +66,32 @@ func parseCSS(css string, rules *CSSRules) {
 		if braceEnd < 0 { break }
 		body := css[i+braceStart+1 : i+braceStart+braceEnd]
 
-		// Skip @rules (media queries, keyframes, etc.)
+		// Handle @rules
 		if strings.HasPrefix(selector, "@") {
-			// Find the end of the @rule block (may be nested)
-			i = i + braceStart + braceEnd + 1
+			if strings.HasPrefix(selector, "@media") {
+				// Parse media query — check if it applies to our viewport (1280px desktop)
+				if mediaApplies(selector, 1280) {
+					// The body contains nested rules — parse them recursively
+					// But body might contain nested { }, so find the matching }
+					innerCSS := findMatchingBraceContent(css[i+braceStart:])
+					if innerCSS != "" {
+						parseCSS(innerCSS, rules)
+					}
+				}
+				// Skip past the entire @media block
+				depth := 0
+				for j := i + braceStart; j < len(css); j++ {
+					if css[j] == '{' { depth++ }
+					if css[j] == '}' { depth--; if depth == 0 { i = j + 1; break } }
+				}
+				continue
+			}
+			// Skip other @rules (keyframes, font-face, etc.)
+			depth := 0
+			for j := i + braceStart; j < len(css); j++ {
+				if css[j] == '{' { depth++ }
+				if css[j] == '}' { depth--; if depth == 0 { i = j + 1; break } }
+			}
 			continue
 		}
 
@@ -164,6 +186,69 @@ func fetchAndParseCSS(href, pageURL string, client *http.Client, rules *CSSRules
 	parseCSS(string(body), rules)
 }
 
+// mediaApplies checks if a @media query applies to the given viewport width.
+// Handles: @media (min-width: Xpx), @media (max-width: Xpx), @media screen
+func mediaApplies(query string, viewportW int) bool {
+	query = strings.ToLower(query)
+
+	// Always match: @media screen, @media all
+	if !strings.Contains(query, "min-width") && !strings.Contains(query, "max-width") {
+		// No width constraint — @media screen, @media print, etc.
+		if strings.Contains(query, "print") { return false }
+		return true
+	}
+
+	// Check min-width
+	if strings.Contains(query, "min-width") {
+		n := 0
+		// Extract the number after "min-width:"
+		idx := strings.Index(query, "min-width")
+		if idx >= 0 {
+			rest := query[idx+9:] // skip "min-width"
+			rest = strings.TrimLeft(rest, ": ")
+			fmt.Sscanf(rest, "%dpx", &n)
+			if n == 0 { fmt.Sscanf(rest, "%d", &n) }
+			if n > 0 && viewportW < n {
+				return false // viewport too narrow
+			}
+		}
+	}
+
+	// Check max-width
+	if strings.Contains(query, "max-width") {
+		n := 0
+		idx := strings.Index(query, "max-width")
+		if idx >= 0 {
+			rest := query[idx+9:]
+			rest = strings.TrimLeft(rest, ": ")
+			fmt.Sscanf(rest, "%dpx", &n)
+			if n == 0 { fmt.Sscanf(rest, "%d", &n) }
+			if n > 0 && viewportW > n {
+				return false // viewport too wide
+			}
+		}
+	}
+
+	return true
+}
+
+// findMatchingBraceContent returns the content between the first { and its matching }.
+func findMatchingBraceContent(s string) string {
+	start := strings.Index(s, "{")
+	if start < 0 { return "" }
+	depth := 0
+	for i := start; i < len(s); i++ {
+		if s[i] == '{' { depth++ }
+		if s[i] == '}' {
+			depth--
+			if depth == 0 {
+				return s[start+1 : i]
+			}
+		}
+	}
+	return ""
+}
+
 // parseStyleProps extracts interesting CSS properties from a rule body.
 func parseStyleProps(body string) map[string]string {
 	props := map[string]string{}
@@ -249,7 +334,12 @@ func applyCSSProps(props map[string]string, s *BoxStyle) {
 		case "visibility":
 			if val == "hidden" { s.Hidden = true; s.Display = "none" }
 		case "position":
-			if val == "fixed" { s.Hidden = true; s.Display = "none" }
+			// position:fixed — only hide if it's likely a cookie banner/overlay
+			// Keep navbars visible (they're at the top and contain navigation)
+			if val == "fixed" {
+				// Don't hide — render in normal flow. The element might be a navbar.
+				// Cookie banners are usually at the bottom with specific classes.
+			}
 		case "flex-direction":
 			s.FlexDirection = val
 		case "justify-content":
@@ -312,9 +402,23 @@ func applyCSSProps(props map[string]string, s *BoxStyle) {
 		case "margin-right":
 			if n := parsePx(val); n >= 0 { s.MarginR = n }
 		case "max-width":
-			if n := parsePx(val); n > 0 {
-				// max-width constrains the element width
-				// This is handled during layout — we just store it
+			// max-width handled via layout
+		case "float":
+			if val == "left" || val == "right" {
+				// float:left = side-by-side layout, treat as inline
+				s.Display = "inline"
+			}
+		case "width":
+			if strings.HasSuffix(val, "%") {
+				pct := 0
+				fmt.Sscanf(val, "%d", &pct)
+				if pct > 0 && pct <= 100 {
+					// Convert percentage to flex-grow for flex containers
+					s.FlexGrow = float64(pct) / 100.0
+				}
+			} else if n := parsePx(val); n > 0 {
+				// Fixed width — store as flex hint
+				_ = n
 			}
 		case "text-decoration":
 			s.Underline = strings.Contains(val, "underline")

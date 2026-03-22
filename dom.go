@@ -291,6 +291,9 @@ func RegisterNode(n *Node, concrete interface{}) {
 	nodeRegistry[n] = concrete
 }
 
+// NodeToElement returns the Element for a Node, or nil.
+func NodeToElement(n *Node) *Element { return nodeToElement(n) }
+
 func nodeToElement(n *Node) *Element {
 	if v, ok := nodeRegistry[n]; ok {
 		if el, ok := v.(*Element); ok {

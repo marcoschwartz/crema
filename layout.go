@@ -1290,6 +1290,84 @@ func computeStyle(el *Element, parent *Box) BoxStyle {
 		activeCSSRules.ApplyCSS(el, &s)
 	}
 
+	// If element has float:left + width from CSS, it's a float-based column.
+	// Make it a flex item (display: block, with FlexGrow set from width).
+	if s.Display == "inline" && s.FlexGrow > 0 {
+		// float:left + width:X% → flex item
+		s.Display = "block"
+	}
+
+	// If element's children are all float-left items, make it a flex container.
+	hasFloatChildren := false
+	floatChildCount := 0
+	totalChildCount := 0
+	for _, child := range el.Children {
+		if cel := nodeToElement(child); cel != nil {
+			totalChildCount++
+			childCls := cel.GetAttribute("class")
+			if childCls != "" {
+				for _, c := range strings.Fields(childCls) {
+					if strings.HasPrefix(c, "col-") {
+						floatChildCount++
+						break
+					}
+				}
+			}
+		}
+	}
+	if totalChildCount > 0 && floatChildCount*2 >= totalChildCount {
+		hasFloatChildren = true
+	}
+	if hasFloatChildren && s.Display != "flex" {
+		s.Display = "flex"
+		s.FlexDirection = "row"
+		s.FlexWrap = "wrap"
+	}
+
+	// Detect common CSS framework patterns and apply layout
+	cls := el.GetAttribute("class")
+	if cls != "" {
+		clsParts := strings.Fields(cls)
+		for _, c := range clsParts {
+			// Bootstrap/Foundation row → flex row
+			if c == "row" {
+				s.Display = "flex"
+				s.FlexDirection = "row"
+				s.FlexWrap = "wrap"
+			}
+			// Bootstrap container → centered max-width
+			if c == "container" || c == "container-fluid" {
+				if s.PaddingL == 0 { s.PaddingL = 15 }
+				if s.PaddingR == 0 { s.PaddingR = 15 }
+			}
+			// Bootstrap col-* → flex item with width
+			if strings.HasPrefix(c, "col-") {
+				s.Display = "block" // not hidden
+				// Extract column number for width
+				parts := strings.Split(c, "-")
+				if len(parts) >= 3 {
+					n := 0
+					fmt.Sscanf(parts[len(parts)-1], "%d", &n)
+					if n > 0 && n <= 12 {
+						s.FlexGrow = float64(n) / 12.0
+					}
+				}
+			}
+			// Flexbox utility classes (Tailwind, Bootstrap 5)
+			if c == "d-flex" || c == "flex" { s.Display = "flex"; s.FlexDirection = "row" }
+			if c == "d-none" || c == "hidden" { s.Hidden = true; s.Display = "none" }
+			if c == "d-block" { s.Display = "block" }
+			if c == "d-inline" { s.Display = "inline" }
+			if c == "flex-column" { s.FlexDirection = "column" }
+			if c == "flex-row" { s.FlexDirection = "row" }
+			if c == "flex-wrap" { s.FlexWrap = "wrap" }
+			if c == "justify-content-center" { s.JustifyContent = "center" }
+			if c == "justify-content-between" { s.JustifyContent = "space-between" }
+			if c == "align-items-center" { s.AlignItems = "center" }
+			if c == "text-center" { /* text-align center — noted */ }
+		}
+	}
+
 	// Handle legacy HTML attributes: bgcolor, color, align, width, cellpadding
 	if bg := el.GetAttribute("bgcolor"); bg != "" {
 		s.BGColor = parseColor(bg)
@@ -1349,7 +1427,7 @@ func computeStyle(el *Element, parent *Box) BoxStyle {
 	// 1. CSS accessibility classes (Bootstrap, Tailwind, WordPress, Foundation)
 	//    These are the standard way to hide content visually while keeping
 	//    it accessible to screen readers. Used by virtually all frameworks.
-	cls := el.GetAttribute("class")
+	cls = el.GetAttribute("class") // reuse cls from above
 	if cls != "" {
 		for _, hideCls := range []string{
 			"sr-only",              // Bootstrap
@@ -1576,15 +1654,9 @@ func parseInlineStyle(style string, s *BoxStyle) {
 				s.PaddingB = max(s.PaddingB, n/4)
 			}
 		case "position":
-			if val == "fixed" {
-				// Fixed elements (sticky headers, cookie banners, floating buttons)
-				// are typically overlays — hide to avoid cluttering
-				s.Hidden = true
-				s.Display = "none"
-			}
-			// position:absolute — keep visible, render in normal flow
-			// (our layout doesn't support absolute positioning, but the content
-			// is often important: infoboxes, sidebars, image captions)
+			// Render fixed/absolute elements in normal flow.
+			// They may be navbars, sidebars, or important content.
+			// Cookie banners are handled by class-based hiding.
 		case "grid-gap", "column-gap", "row-gap":
 			if n, err := strconv.Atoi(strings.TrimSuffix(val, "px")); err == nil {
 				s.Gap = n
@@ -1621,6 +1693,8 @@ func parseInlineStyle(style string, s *BoxStyle) {
 
 func parseColor(val string) Color {
 	val = strings.TrimSpace(val)
+	val = strings.TrimSuffix(val, "!important")
+	val = strings.TrimSpace(val)
 	switch strings.ToLower(val) {
 	case "white": return colorWhite
 	case "black": return colorBlack
@@ -1629,18 +1703,49 @@ func parseColor(val string) Color {
 	case "blue": return Color{0, 123, 255, 255}
 	case "gray", "grey": return colorGray
 	case "transparent": return Color{0, 0, 0, 0}
+	case "inherit", "initial", "unset", "currentcolor": return Color{0, 0, 0, 0}
 	}
+	// #RRGGBB
 	if len(val) == 7 && val[0] == '#' {
 		r, _ := strconv.ParseUint(val[1:3], 16, 8)
 		g, _ := strconv.ParseUint(val[3:5], 16, 8)
 		b, _ := strconv.ParseUint(val[5:7], 16, 8)
 		return Color{uint8(r), uint8(g), uint8(b), 255}
 	}
+	// #RRGGBBAA (8-digit hex with alpha)
+	if len(val) == 9 && val[0] == '#' {
+		r, _ := strconv.ParseUint(val[1:3], 16, 8)
+		g, _ := strconv.ParseUint(val[3:5], 16, 8)
+		b, _ := strconv.ParseUint(val[5:7], 16, 8)
+		a, _ := strconv.ParseUint(val[7:9], 16, 8)
+		return Color{uint8(r), uint8(g), uint8(b), uint8(a)}
+	}
+	// #RGB
 	if len(val) == 4 && val[0] == '#' {
 		r, _ := strconv.ParseUint(string(val[1])+string(val[1]), 16, 8)
 		g, _ := strconv.ParseUint(string(val[2])+string(val[2]), 16, 8)
 		b, _ := strconv.ParseUint(string(val[3])+string(val[3]), 16, 8)
 		return Color{uint8(r), uint8(g), uint8(b), 255}
+	}
+	// rgb(R, G, B) or rgba(R, G, B, A)
+	if strings.HasPrefix(val, "rgb") {
+		val = strings.TrimPrefix(val, "rgba(")
+		val = strings.TrimPrefix(val, "rgb(")
+		val = strings.TrimSuffix(val, ")")
+		parts := strings.Split(val, ",")
+		if len(parts) >= 3 {
+			r, g, b := 0, 0, 0
+			fmt.Sscanf(strings.TrimSpace(parts[0]), "%d", &r)
+			fmt.Sscanf(strings.TrimSpace(parts[1]), "%d", &g)
+			fmt.Sscanf(strings.TrimSpace(parts[2]), "%d", &b)
+			a := 255
+			if len(parts) >= 4 {
+				var af float64
+				fmt.Sscanf(strings.TrimSpace(parts[3]), "%f", &af)
+				a = int(af * 255)
+			}
+			return Color{uint8(r), uint8(g), uint8(b), uint8(a)}
+		}
 	}
 	return colorBlack
 }

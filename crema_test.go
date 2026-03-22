@@ -714,18 +714,18 @@ func TestCSS_GridAsFlexWrap(t *testing.T) {
 	if img == nil { t.Fatal("no image") }
 }
 
-func TestCSS_PositionFixedHidden(t *testing.T) {
+func TestCSS_PositionFixedVisible(t *testing.T) {
 	b := NewBrowser()
 	defer b.Close()
 	p := b.NewPage()
 	p.LoadHTML(`<html><head><style></style></head><body>
-		<div style="position: fixed;">sticky banner</div>
+		<nav style="position: fixed;">Navigation</nav>
 		<div id="content">main content</div>
 	</body></html>`)
 	root := Layout(p.Doc, 800, 400)
 	found := false
-	checkBoxes(root, "sticky banner", &found)
-	if found { t.Error("position:fixed element should be hidden") }
+	checkBoxes(root, "Navigation", &found)
+	if !found { t.Error("position:fixed navbar should be visible") }
 }
 
 func TestCSS_PositionAbsoluteVisible(t *testing.T) {
