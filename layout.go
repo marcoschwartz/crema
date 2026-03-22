@@ -218,6 +218,13 @@ func layoutChildren(el *Element, parent *Box, x int, y *int, availW int, viewpor
 					if cel.TagName == "A" {
 						box.Link = cel.GetAttribute("href")
 					}
+					if cel.TagName == "BUTTON" {
+						box.W = tw + 40
+						box.H = lh + 18
+						box.Style.BGColor = colorBtnBG
+						box.Style.Color = colorBtnText
+						box.Style.Bold = true
+					}
 					parent.Children = append(parent.Children, box)
 					inlineX += box.W + 4 // small gap between inline elements
 					if box.H > maxH { maxH = box.H }
@@ -359,7 +366,7 @@ func layoutBlock(cel *Element, parent *Box, x int, y *int, availW int, viewportW
 		return
 
 	case "LI":
-		inNav := isInsideTag(cel, "NAV")
+		inNav := isInsideTag(cel, "NAV") || (isInsideTag(cel, "HEADER") && isParentNavLike(cel))
 		if !inNav {
 			// Add bullet marker (not in nav menus)
 			box.Bullet = "\u2022 "
@@ -526,6 +533,15 @@ func layoutFlex(el *Element, parent *Box, x int, y *int, availW int, viewportW i
 					tempBox.H = lh + cs.PaddingT + cs.PaddingB
 					tempBox.Text = text
 				}
+			} else {
+				// Shrink-wrap: compute actual content width from children
+				maxRight := 0
+				for _, ch := range tempBox.Children {
+					right := ch.X + ch.W
+					if right > maxRight { maxRight = right }
+				}
+				contentW := maxRight + cs.PaddingR
+				if contentW < tempBox.W { tempBox.W = contentW }
 			}
 			h := tempInnerY + cs.PaddingB
 			lh := fontLineHeight(cs.FontSize)
@@ -534,7 +550,17 @@ func layoutFlex(el *Element, parent *Box, x int, y *int, availW int, viewportW i
 		}
 
 		grow := cs.FlexGrow
-		items = append(items, flexChild{node: child, el: cel, style: cs, box: tempBox, minW: tempBox.W, minH: tempBox.H, grow: grow})
+		minW := tempBox.W
+		// For flex-grow items, use content-based minimum width, not full available width
+		if grow > 0 {
+			text := extractPlainText(cel)
+			if text != "" {
+				minW = measureText(text, cs.FontSize, cs.Bold) + cs.PaddingL + cs.PaddingR
+			} else if minW > availW/2 {
+				minW = 0 // shrink to zero, let grow distribute
+			}
+		}
+		items = append(items, flexChild{node: child, el: cel, style: cs, box: tempBox, minW: minW, minH: tempBox.H, grow: grow})
 	}
 
 	if len(items) == 0 {
@@ -632,14 +658,19 @@ func layoutFlexRow(items []flexChild, parent *Box, x int, y *int, availW int, ga
 
 		for i, ri := range row {
 			box := ri.item.box
+			// Calculate offset from temp layout origin to final position
+			offsetX := curX - box.X
+			offsetY := *y - box.Y
 			box.X = curX
 			box.Y = *y
 
 			// Apply align-items
 			switch style.AlignItems {
 			case "center":
+				offsetY = (*y + (maxH-ri.h)/2) - box.Y + offsetY
 				box.Y = *y + (maxH-ri.h)/2
 			case "flex-end":
+				offsetY = (*y + maxH - ri.h) - box.Y + offsetY
 				box.Y = *y + maxH - ri.h
 			case "stretch":
 				box.H = maxH
@@ -647,6 +678,9 @@ func layoutFlexRow(items []flexChild, parent *Box, x int, y *int, availW int, ga
 
 			box.W = ri.w
 			if box.H == 0 { box.H = ri.h }
+
+			// Offset all children to match the final position
+			offsetChildren(box, offsetX, offsetY)
 
 			parent.Children = append(parent.Children, box)
 			curX += ri.w
@@ -668,13 +702,17 @@ func layoutFlexColumn(items []flexChild, parent *Box, x int, y *int, availW int,
 
 	for i, item := range items {
 		box := item.box
+		offsetX := x - box.X
+		offsetY := *y - box.Y
 		box.Y = *y
 
 		// align-items in column = horizontal alignment
 		switch style.AlignItems {
 		case "center":
+			offsetX = (x + (availW-item.minW)/2) - box.X + offsetX
 			box.X = x + (availW-item.minW)/2
 		case "flex-end":
+			offsetX = (x + availW - item.minW) - box.X + offsetX
 			box.X = x + availW - item.minW
 		case "stretch":
 			box.X = x
@@ -684,10 +722,20 @@ func layoutFlexColumn(items []flexChild, parent *Box, x int, y *int, availW int,
 		}
 
 		if box.H == 0 { box.H = item.minH }
+		offsetChildren(box, offsetX, offsetY)
 
 		parent.Children = append(parent.Children, box)
 		*y += box.H
 		if i < len(items)-1 { *y += gap }
+	}
+}
+
+// offsetChildren recursively offsets all child box coordinates.
+func offsetChildren(box *Box, dx, dy int) {
+	for _, child := range box.Children {
+		child.X += dx
+		child.Y += dy
+		offsetChildren(child, dx, dy)
 	}
 }
 
@@ -796,7 +844,7 @@ func computeStyle(el *Element, parent *Box) BoxStyle {
 		s.Display = "inline"
 	case "A":
 		s.Display = "inline"
-		if isInsideTag(el, "NAV") {
+		if isInsideTag(el, "NAV") || (isInsideTag(el, "HEADER") && isParentNavLike(el)) {
 			s.Color = colorNavText
 			s.Underline = false
 		} else {
@@ -821,8 +869,8 @@ func computeStyle(el *Element, parent *Box) BoxStyle {
 		s.PaddingL = 24
 		s.MarginT = 8
 		s.MarginB = 8
-		// UL inside <nav> → horizontal layout (standard nav pattern per HTML spec)
-		if isInsideTag(el, "NAV") {
+		// UL inside <nav> or <header> where children are navigation links → horizontal
+		if isInsideTag(el, "NAV") || (isInsideTag(el, "HEADER") && isNavLikeList(el)) {
 			s.Display = "flex"
 			s.FlexDirection = "row"
 			s.Gap = 6
@@ -833,8 +881,8 @@ func computeStyle(el *Element, parent *Box) BoxStyle {
 		}
 	case "LI":
 		s.MarginB = 6
-		// LI inside <nav> → inline, no bullets (standard nav list pattern)
-		if isInsideTag(el, "NAV") {
+		// LI inside nav-like list → inline, no bullets
+		if isInsideTag(el, "NAV") || (isInsideTag(el, "HEADER") && isParentNavLike(el)) {
 			s.Display = "inline"
 			s.MarginB = 0
 		}
@@ -880,6 +928,29 @@ func computeStyle(el *Element, parent *Box) BoxStyle {
 	case "TABLE":
 		s.BorderW = 1
 		s.BorderColor = colorMediumGray
+		s.PaddingT = 2
+		s.PaddingB = 2
+	case "TR":
+		s.Display = "flex"
+		s.FlexDirection = "row"
+		s.Gap = 0
+		s.AlignItems = "stretch"
+	case "TD", "TH":
+		s.PaddingT = 4
+		s.PaddingB = 4
+		s.PaddingL = 8
+		s.PaddingR = 8
+		s.FlexGrow = 1
+		s.BorderW = 1
+		s.BorderColor = colorMediumGray
+		if el.TagName == "TH" {
+			s.Bold = true
+			s.BGColor = colorLightGray
+		}
+	case "THEAD":
+		s.Bold = true
+	case "TBODY", "TFOOT":
+		// block, no special styling
 	case "FORM":
 		s.MarginT = 8
 		s.MarginB = 8
@@ -887,8 +958,10 @@ func computeStyle(el *Element, parent *Box) BoxStyle {
 		s.Hidden = true
 		s.Display = "none"
 	case "BUTTON":
+		s.Display = "inline"
 		s.MarginT = 4
 		s.MarginB = 4
+		s.MarginR = 4
 	case "INPUT", "TEXTAREA", "SELECT":
 		s.MarginB = 4
 	}
@@ -991,6 +1064,34 @@ func isFirstFewChildren(el *Element) bool {
 			return false
 		}
 		node = node.Parent
+	}
+	return false
+}
+
+// isNavLikeList checks if a UL/OL looks like a navigation menu.
+// True if most LI children contain an <a> link as first child.
+func isNavLikeList(el *Element) bool {
+	liCount := 0
+	linkLiCount := 0
+	for _, child := range el.Children {
+		if cel := nodeToElement(child); cel != nil && cel.TagName == "LI" {
+			liCount++
+			for _, gc := range child.Children {
+				if gcel := nodeToElement(gc); gcel != nil && gcel.TagName == "A" {
+					linkLiCount++
+					break
+				}
+			}
+		}
+	}
+	return liCount > 0 && linkLiCount*2 >= liCount // majority have links
+}
+
+// isParentNavLike checks if the LI's parent UL is a nav-like list.
+func isParentNavLike(el *Element) bool {
+	if el.Parent == nil { return false }
+	if pel := nodeToElement(el.Parent); pel != nil && (pel.TagName == "UL" || pel.TagName == "OL") {
+		return isNavLikeList(pel)
 	}
 	return false
 }

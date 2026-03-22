@@ -166,9 +166,8 @@ func (p *Page) setupJS() {
 	p.VM.SetValue("document", docJS)
 	RegisterWebAPIs(p.VM, p)
 
-	// Inject jQuery shim so jQuery-dependent sites work
-	// without loading the full 90KB library
-	p.VM.Run(jQueryShim)
+	// Inject jQuery shim as native Go functions
+	injectjQuery(p.VM, p)
 }
 
 // Non-essential script domains — these are ads, analytics, tracking, and CDN
