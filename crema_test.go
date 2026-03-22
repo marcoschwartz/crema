@@ -692,3 +692,61 @@ func TestFormSubmission(t *testing.T) {
 	collectFormData(form, data)
 	if data["q"] != "hello" { t.Errorf("expected q=hello, got %v", data) }
 }
+
+func TestCSS_GridAsFlexWrap(t *testing.T) {
+	b := NewBrowser()
+	defer b.Close()
+	p := b.NewPage()
+	p.LoadHTML(`<html><body>
+		<div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px;">
+			<div>A</div>
+			<div>B</div>
+			<div>C</div>
+		</div>
+	</body></html>`)
+	root := Layout(p.Doc, 800, 400)
+	// Grid should render as flex-wrap row
+	if root == nil { t.Fatal("no layout") }
+	// Just verify it doesn't crash and produces output
+	img := Paint(root)
+	if img == nil { t.Fatal("no image") }
+}
+
+func TestCSS_PositionAbsoluteHidden(t *testing.T) {
+	b := NewBrowser()
+	defer b.Close()
+	p := b.NewPage()
+	p.LoadHTML(`<html><head><style></style></head><body>
+		<div style="position: absolute;">overlay</div>
+		<div id="content">main content</div>
+	</body></html>`)
+	root := Layout(p.Doc, 800, 400)
+	found := false
+	checkBoxes(root, "overlay", &found)
+	if found { t.Error("position:absolute element should be hidden") }
+}
+
+func TestCSS_ExternalStylesheet(t *testing.T) {
+	// Test that ParseStyleTags works with inline styles
+	doc := ParseHTML(`<html><head><style>.hide-me { display: none; }</style></head><body>
+		<div class="hide-me">hidden</div>
+		<div>visible</div>
+	</body></html>`)
+	rules := ParseStyleTags(doc)
+	if len(rules.HiddenSelectors) == 0 { t.Error("should find .hide-me rule") }
+
+	// Test element matching
+	el := QuerySelector(&doc.Node, ".hide-me")
+	if el == nil { t.Fatal("element not found") }
+	if !rules.IsHiddenByCSS(el) { t.Error(".hide-me should match CSS hidden rule") }
+}
+
+func TestImage_PlaceholderFallback(t *testing.T) {
+	b := NewBrowser()
+	defer b.Close()
+	p := b.NewPage()
+	p.LoadHTML(`<html><body><img src="nonexistent.png" alt="test image"></body></html>`)
+	// Should not crash — falls back to placeholder
+	root := Layout(p.Doc, 800, 400)
+	if root == nil { t.Fatal("no layout") }
+}

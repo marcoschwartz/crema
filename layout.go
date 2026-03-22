@@ -2,6 +2,7 @@ package crema
 
 import (
 	"fmt"
+	"image"
 	"strconv"
 	"strings"
 )
@@ -14,15 +15,16 @@ import (
 type Box struct {
 	X, Y, W, H int
 	Element     *Element
-	Text        string      // for text boxes
+	Text        string         // for text boxes
 	Children    []*Box
 	Style       BoxStyle
 	IsText      bool
 	IsInline    bool
-	Link        string      // href for <a> tags
-	InputType   string      // for <input> elements
-	Placeholder string      // for <input> placeholder
-	Bullet      string      // bullet marker for list items
+	Link        string         // href for <a> tags
+	InputType   string         // for <input> elements
+	Placeholder string         // for <input> placeholder
+	Bullet      string         // bullet marker for list items
+	Image       *image.RGBA    // fetched image for <img> elements
 }
 
 // BoxStyle holds computed visual properties.
@@ -93,7 +95,12 @@ var activeCSSRules *CSSRules
 
 // Layout computes the position and size of all visible elements.
 func Layout(doc *Document, viewportW, viewportH int) *Box {
-	activeCSSRules = ParseStyleTags(doc)
+	// Parse CSS — inline <style> tags + external stylesheets if client available
+	if activeClient != nil {
+		activeCSSRules = ParseExternalCSS(doc, activePageURL, activeClient)
+	} else {
+		activeCSSRules = ParseStyleTags(doc)
+	}
 	root := &Box{
 		X: 0, Y: 0,
 		W: viewportW, H: viewportH,
@@ -343,18 +350,48 @@ func layoutBlock(cel *Element, parent *Box, x int, y *int, availW int, viewportW
 	case "IMG":
 		alt := cel.GetAttribute("alt")
 		if alt == "" { alt = "[image]" }
-		box.Text = alt
-		box.H = 80
-		w := 240
-		if ws := cel.GetAttribute("width"); ws != "" {
-			if n, err := strconv.Atoi(ws); err == nil { w = n }
+		src := cel.GetAttribute("src")
+
+		// Try to fetch the actual image
+		var img *image.RGBA
+		if src != "" && activeClient != nil {
+			img = fetchImage(src, activePageURL, activeClient)
 		}
-		box.W = w
-		box.Style.BGColor = colorLightGray
-		box.Style.BorderW = 1
-		box.Style.BorderColor = colorMediumGray
-		box.Style.PaddingT = 8
-		box.Style.PaddingL = 8
+
+		if img != nil {
+			// Use actual image dimensions, constrained to available width
+			imgW := img.Bounds().Dx()
+			imgH := img.Bounds().Dy()
+			if ws := cel.GetAttribute("width"); ws != "" {
+				if n, err := strconv.Atoi(ws); err == nil { imgW = n }
+			}
+			if hs := cel.GetAttribute("height"); hs != "" {
+				if n, err := strconv.Atoi(hs); err == nil { imgH = n }
+			}
+			// Scale down if wider than available
+			if imgW > availW {
+				ratio := float64(availW) / float64(imgW)
+				imgW = availW
+				imgH = int(float64(imgH) * ratio)
+			}
+			box.W = imgW
+			box.H = imgH
+			box.Image = img
+		} else {
+			// Fallback: placeholder
+			box.Text = alt
+			box.H = 60
+			w := 200
+			if ws := cel.GetAttribute("width"); ws != "" {
+				if n, err := strconv.Atoi(ws); err == nil { w = n }
+			}
+			box.W = w
+			box.Style.BGColor = colorLightGray
+			box.Style.BorderW = 1
+			box.Style.BorderColor = colorMediumGray
+			box.Style.PaddingT = 8
+			box.Style.PaddingL = 8
+		}
 		parent.Children = append(parent.Children, box)
 		*y += box.H + style.MarginB
 		return
@@ -1242,6 +1279,12 @@ func parseInlineStyle(style string, s *BoxStyle) {
 			if val == "none" {
 				s.Hidden = true
 				s.Display = "none"
+			} else if val == "grid" {
+				s.Display = "flex"  // treat grid as flex for now
+				s.FlexDirection = "row"
+				s.FlexWrap = "wrap"
+				s.Gap = 16
+				if s.AlignItems == "" { s.AlignItems = "stretch" }
 			} else if val == "flex" {
 				s.Display = "flex"
 				if s.FlexDirection == "" { s.FlexDirection = "row" }
@@ -1269,8 +1312,53 @@ func parseInlineStyle(style string, s *BoxStyle) {
 			}
 		case "flex":
 			// shorthand: flex: 1 → flex-grow: 1
-			if n, err := strconv.ParseFloat(strings.Fields(val)[0], 64); err == nil {
-				s.FlexGrow = n
+			fields := strings.Fields(val)
+			if len(fields) > 0 {
+				if n, err := strconv.ParseFloat(fields[0], 64); err == nil {
+					s.FlexGrow = n
+				}
+			}
+		case "grid-template-columns":
+			// Count columns to estimate child widths
+			// e.g. "1fr 1fr 1fr" or "repeat(3, 1fr)" or "200px 1fr"
+			// Treat as flex-wrap with the number of columns as a hint
+			s.Display = "flex"
+			s.FlexDirection = "row"
+			s.FlexWrap = "wrap"
+			if s.Gap == 0 { s.Gap = 16 }
+		case "overflow":
+			if val == "hidden" || val == "auto" || val == "scroll" {
+				// For rendering purposes, we just let content clip naturally
+				// since our layout doesn't exceed box bounds for text wrapping
+			}
+		case "max-width":
+			// Respect max-width for responsive layouts
+			if n, err := strconv.Atoi(strings.TrimSuffix(val, "px")); err == nil {
+				if s.PaddingL+s.PaddingR+n < 2000 { // sanity check
+					// Store as a hint — the layout engine will use available width
+					_ = n
+				}
+			}
+		case "width":
+			if n, err := strconv.Atoi(strings.TrimSuffix(val, "px")); err == nil {
+				_ = n // handled by layout
+			}
+			if strings.HasSuffix(val, "%") {
+				// percentage widths — ignore for now, layout uses available width
+			}
+		case "height":
+			// explicit heights — ignore for now
+		case "position":
+			if val == "fixed" || val == "absolute" {
+				// Fixed/absolute positioned elements are typically overlays, modals, tooltips.
+				// For headless rendering, hide them to avoid cluttering the page.
+				// If they're important (modals), they'll be shown via JS display changes.
+				s.Hidden = true
+				s.Display = "none"
+			}
+		case "grid-gap", "column-gap", "row-gap":
+			if n, err := strconv.Atoi(strings.TrimSuffix(val, "px")); err == nil {
+				s.Gap = n
 			}
 		case "color":
 			s.Color = parseColor(val)

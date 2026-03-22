@@ -1,6 +1,8 @@
 package crema
 
 import (
+	"io"
+	"net/http"
 	"strings"
 )
 
@@ -82,6 +84,66 @@ func parseCSS(css string, rules *CSSRules) {
 
 		i = i + braceStart + braceEnd + 1
 	}
+}
+
+// ParseExternalCSS fetches external stylesheets and extracts rules.
+func ParseExternalCSS(doc *Document, pageURL string, client *http.Client) *CSSRules {
+	rules := ParseStyleTags(doc)
+	// Find <link rel="stylesheet"> elements
+	findLinkTags(&doc.Node, rules, pageURL, client)
+	return rules
+}
+
+func findLinkTags(n *Node, rules *CSSRules, pageURL string, client *http.Client) {
+	if el := nodeToElement(n); el != nil && el.TagName == "LINK" {
+		rel := strings.ToLower(el.GetAttribute("rel"))
+		if rel == "stylesheet" {
+			href := el.GetAttribute("href")
+			if href != "" {
+				fetchAndParseCSS(href, pageURL, client, rules)
+			}
+		}
+	}
+	for _, child := range n.Children {
+		findLinkTags(child, rules, pageURL, client)
+	}
+}
+
+func fetchAndParseCSS(href, pageURL string, client *http.Client, rules *CSSRules) {
+	if strings.HasPrefix(href, "//") {
+		href = "https:" + href
+	} else if strings.HasPrefix(href, "/") && pageURL != "" {
+		idx := strings.Index(pageURL, "://")
+		if idx > 0 {
+			rest := pageURL[idx+3:]
+			if si := strings.Index(rest, "/"); si > 0 {
+				href = pageURL[:idx+3+si] + href
+			}
+		}
+	}
+	if !strings.HasPrefix(href, "http") { return }
+
+	// Skip known non-essential CSS (fonts, icons)
+	lower := strings.ToLower(href)
+	for _, skip := range []string{"fonts.googleapis.com", "font-awesome", "fontawesome", "icons"} {
+		if strings.Contains(lower, skip) { return }
+	}
+
+	if client == nil { return }
+
+	req, err := http.NewRequest("GET", href, nil)
+	if err != nil { return }
+	req.Header.Set("Accept", "text/css")
+
+	resp, err := client.Do(req)
+	if err != nil { return }
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 { return }
+
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 1*1024*1024)) // 1MB limit
+	if err != nil { return }
+
+	parseCSS(string(body), rules)
 }
 
 // IsHiddenByCSS checks if an element matches any CSS hidden selector.

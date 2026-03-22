@@ -58,6 +58,10 @@ func (p *Page) ScreenshotSize(width, height int) ([]byte, error) {
 		return nil, nil
 	}
 
+	// Set image fetch context
+	activePageURL = p.URL
+	activeClient = p.Browser.Client
+
 	root := Layout(p.Doc, width, height)
 	p.LastLayout = root
 	img := Paint(root)
@@ -124,8 +128,13 @@ func paintBox(img *image.RGBA, box *Box) {
 		drawBorder(img, box.X, box.Y, box.W, box.H, box.Style.BorderW, box.Style.BorderColor)
 	}
 
+	// Image
+	if box.Image != nil {
+		drawImage(img, box.X, box.Y, box.W, box.H, box.Image)
+	}
+
 	// Text
-	if box.Text != "" {
+	if box.Text != "" && box.Image == nil {
 		textX := box.X + box.Style.PaddingL
 		textY := box.Y + box.Style.PaddingT
 
@@ -295,6 +304,34 @@ func drawBorder(img *image.RGBA, x, y, w, h, bw int, c Color) {
 
 func drawHLine(img *image.RGBA, x, y, w int, c Color) {
 	fillRect(img, x, y, w, 1, c)
+}
+
+func drawImage(dst *image.RGBA, x, y, w, h int, src *image.RGBA) {
+	srcW := src.Bounds().Dx()
+	srcH := src.Bounds().Dy()
+	if srcW == 0 || srcH == 0 { return }
+
+	bounds := dst.Bounds()
+	for dy := 0; dy < h; dy++ {
+		py := y + dy
+		if py < 0 || py >= bounds.Max.Y { continue }
+		// Map to source coordinates
+		sy := dy * srcH / h
+		if sy >= srcH { sy = srcH - 1 }
+		for dx := 0; dx < w; dx++ {
+			px := x + dx
+			if px < 0 || px >= bounds.Max.X { continue }
+			sx := dx * srcW / w
+			if sx >= srcW { sx = srcW - 1 }
+			// Copy pixel
+			srcOff := sy*src.Stride + sx*4
+			dstOff := py*dst.Stride + px*4
+			dst.Pix[dstOff] = src.Pix[srcOff]
+			dst.Pix[dstOff+1] = src.Pix[srcOff+1]
+			dst.Pix[dstOff+2] = src.Pix[srcOff+2]
+			dst.Pix[dstOff+3] = src.Pix[srcOff+3]
+		}
+	}
 }
 
 func setPixel(img *image.RGBA, x, y int, c color.RGBA) {
