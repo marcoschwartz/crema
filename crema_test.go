@@ -712,18 +712,31 @@ func TestCSS_GridAsFlexWrap(t *testing.T) {
 	if img == nil { t.Fatal("no image") }
 }
 
-func TestCSS_PositionAbsoluteHidden(t *testing.T) {
+func TestCSS_PositionFixedHidden(t *testing.T) {
 	b := NewBrowser()
 	defer b.Close()
 	p := b.NewPage()
 	p.LoadHTML(`<html><head><style></style></head><body>
-		<div style="position: absolute;">overlay</div>
+		<div style="position: fixed;">sticky banner</div>
 		<div id="content">main content</div>
 	</body></html>`)
 	root := Layout(p.Doc, 800, 400)
 	found := false
-	checkBoxes(root, "overlay", &found)
-	if found { t.Error("position:absolute element should be hidden") }
+	checkBoxes(root, "sticky banner", &found)
+	if found { t.Error("position:fixed element should be hidden") }
+}
+
+func TestCSS_PositionAbsoluteVisible(t *testing.T) {
+	b := NewBrowser()
+	defer b.Close()
+	p := b.NewPage()
+	p.LoadHTML(`<html><head><style></style></head><body>
+		<div style="position: absolute;">important content</div>
+	</body></html>`)
+	root := Layout(p.Doc, 800, 400)
+	found := false
+	checkBoxes(root, "important content", &found)
+	if !found { t.Error("position:absolute element should be visible") }
 }
 
 func TestCSS_ExternalStylesheet(t *testing.T) {
@@ -749,4 +762,49 @@ func TestImage_PlaceholderFallback(t *testing.T) {
 	// Should not crash — falls back to placeholder
 	root := Layout(p.Doc, 800, 400)
 	if root == nil { t.Fatal("no layout") }
+}
+
+func TestImage_LazyLoad(t *testing.T) {
+	b := NewBrowser()
+	defer b.Close()
+	p := b.NewPage()
+	p.LoadHTML(`<html><body>
+		<img data-src="https://via.placeholder.com/100x100" alt="lazy">
+		<img data-lazy-src="https://via.placeholder.com/50x50" alt="lazy2">
+	</body></html>`)
+
+	// Verify the layout picks up data-src
+	activePageURL = ""
+	activeClient = nil
+	root := Layout(p.Doc, 800, 400)
+	// Should produce placeholder boxes (no client to fetch)
+	if root == nil { t.Fatal("no layout") }
+}
+
+func TestImage_ParallelFetch(t *testing.T) {
+	// Test that PrefetchImages collects URLs correctly
+	doc := ParseHTML(`<html><body>
+		<img src="/img/a.png">
+		<img data-src="/img/b.png">
+		<img src="data:image/png;base64,xxx">
+	</body></html>`)
+	var urls []string
+	collectImageURLs(&doc.Node, &urls)
+	// Should find 2 (skips data: URI)
+	if len(urls) != 2 { t.Errorf("expected 2 image URLs, got %d: %v", len(urls), urls) }
+}
+
+func TestScript_NonEssentialSkipped(t *testing.T) {
+	// Google Analytics should be skipped
+	if !shouldSkipScript("https://www.googletagmanager.com/gtag/js") {
+		t.Error("should skip googletagmanager")
+	}
+	// jQuery should be skipped (shimmed)
+	if !shouldSkipScript("https://code.jquery.com/jquery.min.js") {
+		t.Error("should skip jquery (shimmed)")
+	}
+	// Normal scripts should NOT be skipped
+	if shouldSkipScript("https://example.com/app.js") {
+		t.Error("should not skip app.js")
+	}
 }

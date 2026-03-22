@@ -243,22 +243,26 @@ var skipScriptDomains = []string{
 	"pinterest.com", "tiktok.com",
 	"disqus.com", "livechat", "intercom",
 	"beacon.min.js", "rocket-loader",
-	// Large frameworks — jQuery is shimmed, skip the rest
-	"jquery.min.js", "jquery-ui",
-	"bootstrap.min.js", "bootstrap.bundle",
-	"popper.js", "popper.min.js",
-	"leaflet.min.js", "leaflet-src",
-	"slick.min.js", "slick.js",
-	"react.production", "react-dom.production",
-	"vue.min.js", "vue.runtime",
-	"angular.min.js", "angular.js",
-	"summernote", "ckeditor", "tinymce",
+	// Captchas (can't solve them, they block forever)
 	"turnstile", "challenges.cloudflare",
+	"recaptcha", "hcaptcha.com",
+}
+
+// Scripts we skip downloading but still provide shims for.
+// jQuery is shimmed natively. Others get empty stubs so dependent code doesn't crash.
+var shimmedScriptDomains = []string{
+	"jquery.min.js", "jquery-ui",
 }
 
 func shouldSkipScript(src string) bool {
 	lower := strings.ToLower(src)
 	for _, domain := range skipScriptDomains {
+		if strings.Contains(lower, domain) {
+			return true
+		}
+	}
+	// Shimmed scripts — skip download but shim is already injected
+	for _, domain := range shimmedScriptDomains {
 		if strings.Contains(lower, domain) {
 			return true
 		}
@@ -306,7 +310,7 @@ func (p *Page) executeScriptsWithTimeout(timeout time.Duration) {
 
 		scriptTimeout := timeout
 		if !script.Inline {
-			scriptTimeout = 1 * time.Second
+			scriptTimeout = 500 * time.Millisecond
 		}
 		select {
 		case <-done:

@@ -58,9 +58,10 @@ func (p *Page) ScreenshotSize(width, height int) ([]byte, error) {
 		return nil, nil
 	}
 
-	// Set image fetch context
+	// Set image fetch context and prefetch all images in parallel
 	activePageURL = p.URL
 	activeClient = p.Browser.Client
+	PrefetchImages(p.Doc, p.URL, p.Browser.Client)
 
 	root := Layout(p.Doc, width, height)
 	p.LastLayout = root

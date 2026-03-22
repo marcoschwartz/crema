@@ -86,3 +86,58 @@ var (
 	activePageURL string
 	activeClient  *http.Client
 )
+
+// PrefetchImages fetches all <img> elements in parallel before layout.
+// This dramatically speeds up screenshot rendering for image-heavy pages.
+func PrefetchImages(doc *Document, pageURL string, client *http.Client) {
+	var urls []string
+	collectImageURLs(&doc.Node, &urls)
+	if len(urls) == 0 { return }
+
+	// Limit concurrent fetches
+	maxConcurrent := 10
+	sem := make(chan struct{}, maxConcurrent)
+	var wg sync.WaitGroup
+
+	for _, imgURL := range urls {
+		// Resolve URL
+		resolved := imgURL
+		if strings.HasPrefix(resolved, "//") {
+			resolved = "https:" + resolved
+		} else if strings.HasPrefix(resolved, "/") && pageURL != "" {
+			resolved = extractOrigin(pageURL) + resolved
+		}
+		if !strings.HasPrefix(resolved, "http") { continue }
+
+		// Skip if cached
+		imageCacheMu.Lock()
+		_, cached := imageCache[resolved]
+		imageCacheMu.Unlock()
+		if cached { continue }
+
+		wg.Add(1)
+		sem <- struct{}{}
+		go func(url string) {
+			defer wg.Done()
+			defer func() { <-sem }()
+			fetchImage(url, pageURL, client)
+		}(resolved)
+	}
+
+	wg.Wait()
+}
+
+func collectImageURLs(n *Node, urls *[]string) {
+	if el := nodeToElement(n); el != nil && el.TagName == "IMG" {
+		src := el.GetAttribute("src")
+		if src == "" { src = el.GetAttribute("data-src") } // lazy-load
+		if src == "" { src = el.GetAttribute("data-lazy-src") }
+		if src == "" { src = el.GetAttribute("data-original") }
+		if src != "" && !strings.HasPrefix(src, "data:") {
+			*urls = append(*urls, src)
+		}
+	}
+	for _, child := range n.Children {
+		collectImageURLs(child, urls)
+	}
+}

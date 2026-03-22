@@ -350,7 +350,18 @@ func layoutBlock(cel *Element, parent *Box, x int, y *int, availW int, viewportW
 	case "IMG":
 		alt := cel.GetAttribute("alt")
 		if alt == "" { alt = "[image]" }
+		// Check src, then lazy-load attributes
 		src := cel.GetAttribute("src")
+		if src == "" || strings.HasPrefix(src, "data:") {
+			src = cel.GetAttribute("data-src")
+		}
+		if src == "" { src = cel.GetAttribute("data-lazy-src") }
+		if src == "" { src = cel.GetAttribute("data-original") }
+		if src == "" { src = cel.GetAttribute("srcset") }
+		// From srcset, take the first URL
+		if strings.Contains(src, " ") {
+			src = strings.Fields(src)[0]
+		}
 
 		// Try to fetch the actual image
 		var img *image.RGBA
@@ -1349,13 +1360,15 @@ func parseInlineStyle(style string, s *BoxStyle) {
 		case "height":
 			// explicit heights — ignore for now
 		case "position":
-			if val == "fixed" || val == "absolute" {
-				// Fixed/absolute positioned elements are typically overlays, modals, tooltips.
-				// For headless rendering, hide them to avoid cluttering the page.
-				// If they're important (modals), they'll be shown via JS display changes.
+			if val == "fixed" {
+				// Fixed elements (sticky headers, cookie banners, floating buttons)
+				// are typically overlays — hide to avoid cluttering
 				s.Hidden = true
 				s.Display = "none"
 			}
+			// position:absolute — keep visible, render in normal flow
+			// (our layout doesn't support absolute positioning, but the content
+			// is often important: infoboxes, sidebars, image captions)
 		case "grid-gap", "column-gap", "row-gap":
 			if n, err := strconv.Atoi(strings.TrimSuffix(val, "px")); err == nil {
 				s.Gap = n
