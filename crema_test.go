@@ -661,3 +661,34 @@ func checkBoxes(b *Box, text string, found *bool) {
 	if b.Text == text { *found = true }
 	for _, c := range b.Children { checkBoxes(c, text, found) }
 }
+
+func TestCookie_Persistence(t *testing.T) {
+	b := NewBrowser()
+	defer b.Close()
+	p := b.NewPage()
+	p.LoadHTML(`<html><body><script>
+		document.cookie = "session=abc123; path=/";
+		document.cookie = "user=bob; path=/";
+	</script></body></html>`)
+
+	if p.Cookies["session"] != "abc123" { t.Errorf("expected session=abc123, got %v", p.Cookies["session"]) }
+	if p.Cookies["user"] != "bob" { t.Errorf("expected user=bob, got %v", p.Cookies["user"]) }
+}
+
+func TestFormSubmission(t *testing.T) {
+	b := NewBrowser()
+	defer b.Close()
+	p := b.NewPage()
+	p.LoadHTML(`<html><body>
+		<form id="myform" method="GET" action="https://httpbin.org/get">
+			<input type="text" name="q" value="hello">
+		</form>
+	</body></html>`)
+
+	form := p.QuerySelector("#myform")
+	if form == nil { t.Fatal("form not found") }
+	// Just verify collectFormData works
+	data := make(map[string]string)
+	collectFormData(form, data)
+	if data["q"] != "hello" { t.Errorf("expected q=hello, got %v", data) }
+}

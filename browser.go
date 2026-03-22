@@ -120,11 +120,21 @@ func (p *Page) doFetch(url string) ([]byte, error) {
 	req.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
 	req.Header.Set("Accept-Language", "en-US,en;q=0.9")
 
+	// Add cookies to request
+	for name, val := range p.Cookies {
+		req.AddCookie(&http.Cookie{Name: name, Value: val})
+	}
+
 	resp, err := p.Browser.Client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("fetching %s: %w", url, err)
 	}
 	defer resp.Body.Close()
+
+	// Collect Set-Cookie headers
+	for _, cookie := range resp.Cookies() {
+		p.Cookies[cookie.Name] = cookie.Value
+	}
 
 	body, err := io.ReadAll(io.LimitReader(resp.Body, 10*1024*1024))
 	if err != nil {
@@ -338,6 +348,78 @@ func (p *Page) fireLifecycleEvents() {
 	fireAll(p.docListeners["DOMContentLoaded"])
 	fireAll(p.winListeners["load"])
 	fireAll(p.docListeners["readystatechange"])
+}
+
+// SubmitForm submits a form element via HTTP and navigates to the result.
+func (p *Page) SubmitForm(form *Element) error {
+	action := form.GetAttribute("action")
+	if action == "" { action = p.URL }
+	method := strings.ToUpper(form.GetAttribute("method"))
+	if method == "" { method = "GET" }
+
+	// Resolve relative action
+	if strings.HasPrefix(action, "/") && p.URL != "" {
+		action = extractOrigin(p.URL) + action
+	}
+
+	// Collect form data
+	data := make(map[string]string)
+	collectFormData(form, data)
+
+	if method == "GET" {
+		// Append as query string
+		var params []string
+		for k, v := range data { params = append(params, k+"="+v) }
+		if len(params) > 0 {
+			sep := "?"
+			if strings.Contains(action, "?") { sep = "&" }
+			action += sep + strings.Join(params, "&")
+		}
+		return p.Navigate(action)
+	}
+
+	// POST
+	var bodyParts []string
+	for k, v := range data { bodyParts = append(bodyParts, k+"="+v) }
+	bodyStr := strings.Join(bodyParts, "&")
+
+	req, err := http.NewRequest("POST", action, strings.NewReader(bodyStr))
+	if err != nil { return err }
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("User-Agent", p.UserAgent)
+	for name, val := range p.Cookies { req.AddCookie(&http.Cookie{Name: name, Value: val}) }
+
+	resp, err := p.Browser.Client.Do(req)
+	if err != nil { return err }
+	defer resp.Body.Close()
+	for _, cookie := range resp.Cookies() { p.Cookies[cookie.Name] = cookie.Value }
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 10*1024*1024))
+
+	p.URL = action
+	p.Doc = ParseHTML(string(body))
+	p.setupJS()
+	p.Scripts = ExtractScripts(p.Doc)
+	p.executeScriptsWithTimeout(5 * time.Second)
+	p.fireLifecycleEvents()
+	return nil
+}
+
+func collectFormData(el *Element, data map[string]string) {
+	if el.TagName == "INPUT" || el.TagName == "TEXTAREA" || el.TagName == "SELECT" {
+		name := el.GetAttribute("name")
+		if name != "" {
+			val := el.GetAttribute("value")
+			if val == "" && el.TagName == "TEXTAREA" {
+				val = extractPlainText(el)
+			}
+			data[name] = val
+		}
+	}
+	for _, child := range el.Children {
+		if cel := nodeToElement(child); cel != nil {
+			collectFormData(cel, data)
+		}
+	}
 }
 
 // Eval executes JavaScript in the page context.
