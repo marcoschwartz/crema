@@ -608,3 +608,56 @@ func TestJS_DirectSetter(t *testing.T) {
 	r, _ := p.Eval(`document.getElementById("s").textContent`)
 	t.Logf("JS: %q", r.String())
 }
+
+func TestJS_ElementMatches(t *testing.T) {
+	b := NewBrowser()
+	defer b.Close()
+	p := b.NewPage()
+	p.LoadHTML(`<html><body><div id="x" class="foo bar"></div></body></html>`)
+
+	r, _ := p.Eval(`document.getElementById("x").matches(".foo")`)
+	if !r.Bool() { t.Error("should match .foo") }
+	r2, _ := p.Eval(`document.getElementById("x").matches(".baz")`)
+	if r2.Bool() { t.Error("should not match .baz") }
+	r3, _ := p.Eval(`document.getElementById("x").matches("div.foo")`)
+	if !r3.Bool() { t.Error("should match div.foo") }
+}
+
+func TestJS_ElementClosest(t *testing.T) {
+	b := NewBrowser()
+	defer b.Close()
+	p := b.NewPage()
+	p.LoadHTML(`<html><body><div class="outer"><div class="inner"><span id="s">hi</span></div></div></body></html>`)
+
+	r, _ := p.Eval(`document.getElementById("s").closest(".inner").className`)
+	if r.String() != "inner" { t.Errorf("expected 'inner', got '%s'", r.String()) }
+	r2, _ := p.Eval(`document.getElementById("s").closest(".outer").className`)
+	if r2.String() != "outer" { t.Errorf("expected 'outer', got '%s'", r2.String()) }
+	r3, _ := p.Eval(`document.getElementById("s").closest(".nope")`)
+	if !r3.IsNull() { t.Error("should be null for no match") }
+}
+
+func TestCSS_StyleTagHidesElement(t *testing.T) {
+	b := NewBrowser()
+	defer b.Close()
+	p := b.NewPage()
+	p.LoadHTML(`<html><head><style>.hidden { display: none; } .invisible { visibility: hidden; }</style></head><body>
+		<div class="hidden">should not render</div>
+		<div id="visible">should render</div>
+	</body></html>`)
+
+	// The hidden div should not appear in layout
+	root := Layout(p.Doc, 800, 400)
+	found := false
+	checkBoxes(root, "should not render", &found)
+	if found { t.Error("hidden element should not be in layout") }
+
+	// Visible div should be there
+	el := p.QuerySelector("#visible")
+	if el == nil { t.Error("visible div should exist") }
+}
+
+func checkBoxes(b *Box, text string, found *bool) {
+	if b.Text == text { *found = true }
+	for _, c := range b.Children { checkBoxes(c, text, found) }
+}

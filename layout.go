@@ -88,8 +88,12 @@ const (
 	bodyPaddingY     = 16
 )
 
+// activeCSSRules holds CSS rules parsed from <style> tags for the current layout.
+var activeCSSRules *CSSRules
+
 // Layout computes the position and size of all visible elements.
 func Layout(doc *Document, viewportW, viewportH int) *Box {
+	activeCSSRules = ParseStyleTags(doc)
 	root := &Box{
 		X: 0, Y: 0,
 		W: viewportW, H: viewportH,
@@ -1080,6 +1084,12 @@ func computeStyle(el *Element, parent *Box) BoxStyle {
 	}
 
 	if el.HasAttribute("hidden") {
+		s.Hidden = true
+		s.Display = "none"
+	}
+
+	// 0. Check CSS rules from <style> tags
+	if activeCSSRules != nil && activeCSSRules.IsHiddenByCSS(el) {
 		s.Hidden = true
 		s.Display = "none"
 	}

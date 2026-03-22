@@ -508,8 +508,30 @@ func elementToJS(el *Element) *espresso.Value {
 		return espresso.Undefined
 	})
 	v.Object()["appendChild"] = espresso.NewNativeFunc(func(args []*espresso.Value) *espresso.Value {
-		// TODO: extract Node from JS value and append
 		return espresso.Undefined
+	})
+	v.Object()["matches"] = espresso.NewNativeFunc(func(args []*espresso.Value) *espresso.Value {
+		if len(args) == 0 { return espresso.NewBool(false) }
+		sel := args[0].String()
+		parts := parseSelector(sel)
+		for _, chain := range parts {
+			if matchChain(el, chain) { return espresso.NewBool(true) }
+		}
+		return espresso.NewBool(false)
+	})
+	v.Object()["closest"] = espresso.NewNativeFunc(func(args []*espresso.Value) *espresso.Value {
+		if len(args) == 0 { return espresso.Null }
+		sel := args[0].String()
+		parts := parseSelector(sel)
+		// Walk up from this element including self
+		for cur := el; cur != nil; {
+			for _, chain := range parts {
+				if matchChain(cur, chain) { return elementToJS(cur) }
+			}
+			if cur.Parent == nil { break }
+			cur = nodeToElement(cur.Parent)
+		}
+		return espresso.Null
 	})
 
 	// addEventListener / removeEventListener / dispatchEvent
