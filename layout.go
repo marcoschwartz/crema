@@ -451,6 +451,115 @@ func layoutBlock(cel *Element, parent *Box, x int, y *int, availW int, viewportW
 		*y += box.H + style.MarginB + 4
 		return
 
+	case "VIDEO":
+		w := 640
+		h := 360
+		if ws := cel.GetAttribute("width"); ws != "" {
+			if n, err := strconv.Atoi(ws); err == nil && n > 0 { w = n }
+		}
+		if hs := cel.GetAttribute("height"); hs != "" {
+			if n, err := strconv.Atoi(hs); err == nil && n > 0 { h = n }
+		}
+		if w > availW { w = availW; h = w * 9 / 16 }
+		box.W = w
+		box.H = h
+		box.Style.BGColor = Color{20, 20, 20, 255}
+		box.Style.Color = colorWhite
+		box.Text = "▶ Video"
+		parent.Children = append(parent.Children, box)
+		*y += box.H + style.MarginB
+		return
+
+	case "AUDIO":
+		box.W = availW
+		box.H = 40
+		box.Style.BGColor = colorLightGray
+		box.Style.BorderW = 1
+		box.Style.BorderColor = colorMediumGray
+		box.Text = "♪ Audio"
+		parent.Children = append(parent.Children, box)
+		*y += box.H + style.MarginB
+		return
+
+	case "IFRAME":
+		w := availW
+		h := 300
+		if ws := cel.GetAttribute("width"); ws != "" {
+			if n, err := strconv.Atoi(ws); err == nil && n > 0 { w = n }
+		}
+		if hs := cel.GetAttribute("height"); hs != "" {
+			if n, err := strconv.Atoi(hs); err == nil && n > 0 { h = n }
+		}
+		if w > availW { w = availW }
+		box.W = w
+		box.H = h
+		box.Style.BGColor = colorLightGray
+		box.Style.BorderW = 1
+		box.Style.BorderColor = colorMediumGray
+		src := cel.GetAttribute("src")
+		if src != "" {
+			if len(src) > 40 { src = src[:40] + "..." }
+			box.Text = "[iframe: " + src + "]"
+		} else {
+			box.Text = "[iframe]"
+		}
+		parent.Children = append(parent.Children, box)
+		*y += box.H + style.MarginB
+		return
+
+	case "CANVAS":
+		w := 300
+		h := 150
+		if ws := cel.GetAttribute("width"); ws != "" {
+			if n, err := strconv.Atoi(ws); err == nil && n > 0 { w = n }
+		}
+		if hs := cel.GetAttribute("height"); hs != "" {
+			if n, err := strconv.Atoi(hs); err == nil && n > 0 { h = n }
+		}
+		if w > availW { w = availW }
+		box.W = w
+		box.H = h
+		box.Style.BGColor = Color{245, 245, 245, 255}
+		box.Style.BorderW = 1
+		box.Style.BorderColor = colorMediumGray
+		box.Text = "[canvas]"
+		parent.Children = append(parent.Children, box)
+		*y += box.H + style.MarginB
+		return
+
+	case "SVG":
+		// Render SVG as a sized placeholder
+		w := 24
+		h := 24
+		if ws := cel.GetAttribute("width"); ws != "" {
+			ws = strings.TrimSuffix(ws, "px")
+			if n, err := strconv.Atoi(ws); err == nil && n > 0 { w = n }
+		}
+		if hs := cel.GetAttribute("height"); hs != "" {
+			hs = strings.TrimSuffix(hs, "px")
+			if n, err := strconv.Atoi(hs); err == nil && n > 0 { h = n }
+		}
+		if vb := cel.GetAttribute("viewBox"); vb != "" && w == 24 {
+			// Parse viewBox="0 0 W H"
+			parts := strings.Fields(vb)
+			if len(parts) >= 4 {
+				if n, err := strconv.Atoi(parts[2]); err == nil && n > 0 { w = n }
+				if n, err := strconv.Atoi(parts[3]); err == nil && n > 0 { h = n }
+			}
+		}
+		// Cap size
+		if w > availW { w = availW }
+		if h > 200 { h = 200 }
+		box.W = w
+		box.H = h
+		box.Style.BGColor = Color{245, 245, 245, 255}
+		title := cel.GetAttribute("aria-label")
+		if title == "" { title = cel.GetAttribute("title") }
+		if title != "" { box.Text = title }
+		parent.Children = append(parent.Children, box)
+		*y += box.H + style.MarginB
+		return
+
 	case "HR":
 		box.H = 1
 		box.Style.BGColor = colorMediumGray
@@ -1089,7 +1198,17 @@ func computeStyle(el *Element, parent *Box) BoxStyle {
 	case "FORM":
 		s.MarginT = 8
 		s.MarginB = 8
-	case "SCRIPT", "STYLE", "LINK", "META", "HEAD", "NOSCRIPT", "SVG", "PATH", "TEMPLATE":
+	case "SCRIPT", "STYLE", "LINK", "META", "HEAD", "NOSCRIPT", "TEMPLATE":
+		s.Hidden = true
+		s.Display = "none"
+	case "SVG":
+		// Render SVG as a sized placeholder box
+		s.Display = "block"
+	case "CANVAS":
+		// Canvas — render as placeholder with dimensions
+		s.Display = "block"
+	case "PATH", "G", "DEFS", "CLIPPATH", "MASK", "USE", "SYMBOL", "LINEARGRADIENT", "RADIALGRADIENT", "STOP", "CIRCLE", "RECT", "LINE", "POLYLINE", "POLYGON", "ELLIPSE", "TEXT":
+		// SVG internal elements — hide (we can't render SVG paths)
 		s.Hidden = true
 		s.Display = "none"
 	case "BUTTON":
@@ -1136,10 +1255,13 @@ func computeStyle(el *Element, parent *Box) BoxStyle {
 		s.Display = "none"
 	}
 
-	// 0. Check CSS rules from <style> tags
-	if activeCSSRules != nil && activeCSSRules.IsHiddenByCSS(el) {
-		s.Hidden = true
-		s.Display = "none"
+	// 0. Apply CSS rules from <style> tags and external stylesheets
+	if activeCSSRules != nil {
+		if activeCSSRules.IsHiddenByCSS(el) {
+			s.Hidden = true
+			s.Display = "none"
+		}
+		activeCSSRules.ApplyCSS(el, &s)
 	}
 
 	// ── Visibility rules based on web standards and universal conventions ──

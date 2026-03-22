@@ -1,14 +1,22 @@
 package crema
 
 import (
+	"fmt"
 	"io"
 	"net/http"
 	"strings"
 )
 
+// CSSRule holds a parsed CSS rule with selector and properties.
+type CSSRule struct {
+	Selector string
+	Props    map[string]string
+}
+
 // CSSRules holds parsed CSS rules that affect visibility and display.
 type CSSRules struct {
-	HiddenSelectors []string // selectors with display:none or visibility:hidden
+	HiddenSelectors []string   // selectors with display:none or visibility:hidden
+	StyleRules      []CSSRule  // selectors with other style properties
 }
 
 // ParseStyleTags extracts CSS rules from <style> tags in the document.
@@ -73,11 +81,21 @@ func parseCSS(css string, rules *CSSRules) {
 			strings.Contains(bodyLower, "visibility: hidden")
 
 		if isHidden {
-			// Split comma-separated selectors
 			for _, sel := range strings.Split(selector, ",") {
 				sel = strings.TrimSpace(sel)
 				if sel != "" {
 					rules.HiddenSelectors = append(rules.HiddenSelectors, sel)
+				}
+			}
+		}
+
+		// Also extract color/background/font-size rules for styling
+		props := parseStyleProps(body)
+		if len(props) > 0 {
+			for _, sel := range strings.Split(selector, ",") {
+				sel = strings.TrimSpace(sel)
+				if sel != "" {
+					rules.StyleRules = append(rules.StyleRules, CSSRule{Selector: sel, Props: props})
 				}
 			}
 		}
@@ -144,6 +162,75 @@ func fetchAndParseCSS(href, pageURL string, client *http.Client, rules *CSSRules
 	if err != nil { return }
 
 	parseCSS(string(body), rules)
+}
+
+// parseStyleProps extracts interesting CSS properties from a rule body.
+func parseStyleProps(body string) map[string]string {
+	props := map[string]string{}
+	for _, decl := range strings.Split(body, ";") {
+		decl = strings.TrimSpace(decl)
+		colonIdx := strings.Index(decl, ":")
+		if colonIdx < 0 { continue }
+		prop := strings.TrimSpace(decl[:colonIdx])
+		val := strings.TrimSpace(decl[colonIdx+1:])
+		// Only keep properties we can use
+		switch prop {
+		case "color", "background-color", "background",
+			"font-size", "font-weight", "font-style",
+			"display", "visibility",
+			"padding", "padding-top", "padding-bottom", "padding-left", "padding-right",
+			"margin", "margin-top", "margin-bottom",
+			"border", "border-color",
+			"text-decoration", "text-align",
+			"flex-direction", "justify-content", "align-items", "gap", "flex-wrap":
+			props[prop] = val
+		}
+	}
+	return props
+}
+
+// ApplyCSS applies CSS style rules to an element's BoxStyle.
+func (rules *CSSRules) ApplyCSS(el *Element, s *BoxStyle) {
+	if rules == nil { return }
+	for _, rule := range rules.StyleRules {
+		parts := parseSelector(rule.Selector)
+		matched := false
+		for _, chain := range parts {
+			if matchChain(el, chain) { matched = true; break }
+		}
+		if !matched { continue }
+		// Apply properties
+		for prop, val := range rule.Props {
+			switch prop {
+			case "color":
+				s.Color = parseColor(val)
+			case "background-color", "background":
+				if !strings.Contains(val, "url(") && !strings.Contains(val, "gradient") {
+					s.BGColor = parseColor(val)
+				}
+			case "font-size":
+				n := 0
+				if strings.HasSuffix(val, "px") {
+					fmt.Sscanf(val, "%dpx", &n)
+				} else if strings.HasSuffix(val, "em") || strings.HasSuffix(val, "rem") {
+					var f float64
+					fmt.Sscanf(val, "%f", &f)
+					n = int(f * 16)
+				}
+				if n > 0 && n < 72 { s.FontSize = n }
+			case "font-weight":
+				s.Bold = val == "bold" || val == "700" || val == "800" || val == "900"
+			case "display":
+				if val == "none" { s.Hidden = true; s.Display = "none" }
+				if val == "flex" { s.Display = "flex"; s.FlexDirection = "row" }
+				if val == "grid" { s.Display = "flex"; s.FlexDirection = "row"; s.FlexWrap = "wrap" }
+			case "gap":
+				n := 0
+				fmt.Sscanf(val, "%dpx", &n)
+				if n > 0 { s.Gap = n }
+			}
+		}
+	}
 }
 
 // IsHiddenByCSS checks if an element matches any CSS hidden selector.

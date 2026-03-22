@@ -108,6 +108,9 @@ func (p *Page) Navigate(url string) error {
 	// Fire lifecycle events
 	p.fireLifecycleEvents()
 
+	// Simulate lazy-load: copy data-src → src for images that haven't been loaded
+	simulateLazyLoad(p.Doc)
+
 	return nil
 }
 
@@ -423,6 +426,44 @@ func collectFormData(el *Element, data map[string]string) {
 		if cel := nodeToElement(child); cel != nil {
 			collectFormData(cel, data)
 		}
+	}
+}
+
+// simulateLazyLoad walks the DOM and copies lazy-load attributes to src.
+// This simulates what lazy-load JS libraries do (swap data-src to src).
+func simulateLazyLoad(doc *Document) {
+	walkLazyLoad(&doc.Node)
+}
+
+func walkLazyLoad(n *Node) {
+	if el := nodeToElement(n); el != nil && el.TagName == "IMG" {
+		src := el.GetAttribute("src")
+		if src == "" || strings.HasPrefix(src, "data:") || src == "about:blank" {
+			// Try lazy-load attributes
+			for _, attr := range []string{"data-src", "data-lazy-src", "data-original", "data-lazy"} {
+				if val := el.GetAttribute(attr); val != "" {
+					el.SetAttribute("src", val)
+					break
+				}
+			}
+		}
+		// Also handle srcset
+		if el.GetAttribute("src") == "" {
+			if srcset := el.GetAttribute("data-srcset"); srcset != "" {
+				el.SetAttribute("srcset", srcset)
+			}
+		}
+	}
+	// Also handle <source> inside <picture>
+	if el := nodeToElement(n); el != nil && el.TagName == "SOURCE" {
+		if el.GetAttribute("srcset") == "" {
+			if ds := el.GetAttribute("data-srcset"); ds != "" {
+				el.SetAttribute("srcset", ds)
+			}
+		}
+	}
+	for _, child := range n.Children {
+		walkLazyLoad(child)
 	}
 }
 

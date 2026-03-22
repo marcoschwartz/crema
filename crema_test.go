@@ -808,3 +808,92 @@ func TestScript_NonEssentialSkipped(t *testing.T) {
 		t.Error("should not skip app.js")
 	}
 }
+
+func TestTable_Nested(t *testing.T) {
+	b := NewBrowser()
+	defer b.Close()
+	p := b.NewPage()
+	p.LoadHTML(`<html><body>
+		<table>
+			<tr><td>Name</td><td>
+				<table><tr><td>First</td><td>Last</td></tr></table>
+			</td></tr>
+		</table>
+	</body></html>`)
+	root := Layout(p.Doc, 800, 400)
+	if root == nil { t.Fatal("no layout") }
+	img := Paint(root)
+	if img == nil { t.Fatal("no image") }
+}
+
+func TestSVG_Render(t *testing.T) {
+	b := NewBrowser()
+	defer b.Close()
+	p := b.NewPage()
+	p.LoadHTML(`<html><body>
+		<svg width="100" height="50" aria-label="Logo"><path d="M0 0h100v50H0z"/></svg>
+		<p>After SVG</p>
+	</body></html>`)
+	root := Layout(p.Doc, 800, 400)
+	// SVG should produce a box
+	found := false
+	checkBoxes(root, "Logo", &found)
+	if !found { t.Error("SVG with aria-label should render as labeled box") }
+}
+
+func TestLazyLoad_DataSrc(t *testing.T) {
+	doc := ParseHTML(`<html><body>
+		<img data-src="https://example.com/photo.jpg" alt="test">
+	</body></html>`)
+	simulateLazyLoad(doc)
+	el := QuerySelector(&doc.Node, "img")
+	if el == nil { t.Fatal("no img") }
+	if el.GetAttribute("src") != "https://example.com/photo.jpg" {
+		t.Errorf("expected src set from data-src, got %q", el.GetAttribute("src"))
+	}
+}
+
+func TestCSS_ColorFromRules(t *testing.T) {
+	doc := ParseHTML(`<html><head><style>
+		.red { color: red; }
+		.bg-blue { background-color: #0000ff; }
+	</style></head><body>
+		<span class="red">red text</span>
+		<div class="bg-blue">blue bg</div>
+	</body></html>`)
+	rules := ParseStyleTags(doc)
+	if len(rules.StyleRules) < 2 { t.Errorf("expected 2+ style rules, got %d", len(rules.StyleRules)) }
+}
+
+func TestCanvas_Render(t *testing.T) {
+	b := NewBrowser()
+	defer b.Close()
+	p := b.NewPage()
+	p.LoadHTML(`<html><body><canvas width="400" height="200"></canvas></body></html>`)
+	root := Layout(p.Doc, 800, 400)
+	found := false
+	checkBoxes(root, "[canvas]", &found)
+	if !found { t.Error("canvas should render as placeholder") }
+}
+
+func TestVideo_Render(t *testing.T) {
+	b := NewBrowser()
+	defer b.Close()
+	p := b.NewPage()
+	p.LoadHTML(`<html><body><video width="640" height="360"></video></body></html>`)
+	root := Layout(p.Doc, 800, 400)
+	found := false
+	checkBoxes(root, "▶ Video", &found)
+	if !found { t.Error("video should render as placeholder") }
+}
+
+func TestIframe_Render(t *testing.T) {
+	b := NewBrowser()
+	defer b.Close()
+	p := b.NewPage()
+	p.LoadHTML(`<html><body><iframe src="https://example.com" width="600" height="400"></iframe></body></html>`)
+	root := Layout(p.Doc, 800, 500)
+	found := false
+	checkBoxes(root, "[iframe: https://example.com]", &found)
+	if !found { t.Error("iframe should render as placeholder") }
+}
