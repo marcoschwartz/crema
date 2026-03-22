@@ -1329,3 +1329,34 @@ func TestSite_AdultfolioSubmitLogin(t *testing.T) {
 		t.Logf("Links on result page: %d", len(p.QuerySelectorAll("a")))
 	}
 }
+
+func TestSite_IANA(t *testing.T) {
+	if testing.Short() { t.Skip() }
+	b := NewBrowser()
+	defer b.Close()
+	p := b.NewPage()
+	err := p.Navigate("https://iana.org/domains/example")
+	if err != nil { t.Fatalf("nav: %v", err) }
+	t.Logf("Title: %s", p.Title())
+	t.Logf("Links: %d", len(p.QuerySelectorAll("a")))
+	
+	// Check what elements we find
+	h1 := p.TextContent("h1")
+	t.Logf("H1: %q", h1)
+	
+	navs := p.QuerySelectorAll("nav")
+	t.Logf("Navs: %d", len(navs))
+	
+	// Check for issues
+	imgs := p.QuerySelectorAll("img")
+	t.Logf("Images: %d", len(imgs))
+	for _, img := range imgs {
+		src := img.GetAttribute("src")
+		alt := img.GetAttribute("alt")
+		t.Logf("  img src=%q alt=%q", src, alt)
+	}
+	
+	p.ScreenshotFileSize("/tmp/crema_iana.png", 1280, 900)
+	t.Log("Screenshot saved")
+}
+
