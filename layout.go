@@ -130,6 +130,16 @@ func Layout(doc *Document, viewportW, viewportH int) *Box {
 		}
 	}
 
+	// Legacy: check bgcolor on body and html
+	if bg := body.GetAttribute("bgcolor"); bg != "" {
+		root.Style.BGColor = parseColor(bg)
+	}
+	if htmlEl != nil {
+		if bg := htmlEl.GetAttribute("bgcolor"); bg != "" && root.Style.BGColor == colorWhite {
+			root.Style.BGColor = parseColor(bg)
+		}
+	}
+
 	// Center content with max width
 	contentW := viewportW
 	if contentW > maxContentWidth+bodyPaddingX*2 {
@@ -1246,7 +1256,20 @@ func computeStyle(el *Element, parent *Box) BoxStyle {
 		s.MarginB = 4
 	}
 
-	// Parse inline style attribute
+	// Apply external CSS rules (before inline styles — cascade order)
+	if activeCSSRules != nil {
+		activeCSSRules.ApplyCSS(el, &s)
+	}
+
+	// Handle legacy HTML attributes: bgcolor, color, align, width
+	if bg := el.GetAttribute("bgcolor"); bg != "" {
+		s.BGColor = parseColor(bg)
+	}
+	if c := el.GetAttribute("color"); c != "" {
+		s.Color = parseColor(c)
+	}
+
+	// Parse inline style attribute (overrides external CSS)
 	if style := el.GetAttribute("style"); style != "" {
 		parseInlineStyle(style, &s)
 	}
@@ -1279,13 +1302,10 @@ func computeStyle(el *Element, parent *Box) BoxStyle {
 		s.Display = "none"
 	}
 
-	// 0. Apply CSS rules from <style> tags and external stylesheets
-	if activeCSSRules != nil {
-		if activeCSSRules.IsHiddenByCSS(el) {
-			s.Hidden = true
-			s.Display = "none"
-		}
-		activeCSSRules.ApplyCSS(el, &s)
+	// Check CSS hidden rules (display:none from stylesheets)
+	if activeCSSRules != nil && activeCSSRules.IsHiddenByCSS(el) {
+		s.Hidden = true
+		s.Display = "none"
 	}
 
 	// ── Visibility rules based on web standards and universal conventions ──

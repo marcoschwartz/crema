@@ -175,14 +175,16 @@ func parseStyleProps(body string) map[string]string {
 		val := strings.TrimSpace(decl[colonIdx+1:])
 		// Only keep properties we can use
 		switch prop {
-		case "color", "background-color", "background",
-			"font-size", "font-weight", "font-style",
-			"display", "visibility",
+		case "color", "background-color", "background", "background-image",
+			"font-size", "font-weight", "font-style", "font-family",
+			"display", "visibility", "position",
 			"padding", "padding-top", "padding-bottom", "padding-left", "padding-right",
-			"margin", "margin-top", "margin-bottom",
-			"border", "border-color",
+			"margin", "margin-top", "margin-bottom", "margin-left", "margin-right",
+			"border", "border-color", "border-radius",
 			"text-decoration", "text-align",
-			"flex-direction", "justify-content", "align-items", "gap", "flex-wrap":
+			"flex-direction", "justify-content", "align-items", "gap", "flex-wrap", "flex",
+			"width", "max-width", "min-width", "height", "min-height",
+			"overflow", "float":
 			props[prop] = val
 		}
 	}
@@ -199,38 +201,109 @@ func (rules *CSSRules) ApplyCSS(el *Element, s *BoxStyle) {
 			if matchChain(el, chain) { matched = true; break }
 		}
 		if !matched { continue }
-		// Apply properties
-		for prop, val := range rule.Props {
-			switch prop {
-			case "color":
-				s.Color = parseColor(val)
-			case "background-color", "background":
-				if !strings.Contains(val, "url(") && !strings.Contains(val, "gradient") {
-					s.BGColor = parseColor(val)
-				}
-			case "font-size":
-				n := 0
-				if strings.HasSuffix(val, "px") {
-					fmt.Sscanf(val, "%dpx", &n)
-				} else if strings.HasSuffix(val, "em") || strings.HasSuffix(val, "rem") {
-					var f float64
-					fmt.Sscanf(val, "%f", &f)
-					n = int(f * 16)
-				}
-				if n > 0 && n < 72 { s.FontSize = n }
-			case "font-weight":
-				s.Bold = val == "bold" || val == "700" || val == "800" || val == "900"
-			case "display":
-				if val == "none" { s.Hidden = true; s.Display = "none" }
-				if val == "flex" { s.Display = "flex"; s.FlexDirection = "row" }
-				if val == "grid" { s.Display = "flex"; s.FlexDirection = "row"; s.FlexWrap = "wrap" }
-			case "gap":
-				n := 0
-				fmt.Sscanf(val, "%dpx", &n)
-				if n > 0 { s.Gap = n }
+		applyCSSProps(rule.Props, s)
+	}
+}
+
+func applyCSSProps(props map[string]string, s *BoxStyle) {
+	for prop, val := range props {
+		switch prop {
+		case "color":
+			s.Color = parseColor(val)
+		case "background-color":
+			s.BGColor = parseColor(val)
+		case "background":
+			if !strings.Contains(val, "url(") && !strings.Contains(val, "gradient") {
+				s.BGColor = parseColor(val)
 			}
+		case "font-size":
+			n := parsePx(val)
+			if n == 0 && (strings.HasSuffix(val, "em") || strings.HasSuffix(val, "rem")) {
+				var f float64
+				fmt.Sscanf(val, "%f", &f)
+				n = int(f * 16)
+			}
+			if n > 0 && n < 72 { s.FontSize = n }
+		case "font-weight":
+			s.Bold = val == "bold" || val == "700" || val == "800" || val == "900"
+		case "font-style":
+			s.Italic = val == "italic"
+		case "display":
+			switch val {
+			case "none":
+				s.Hidden = true; s.Display = "none"
+			case "flex":
+				s.Display = "flex"
+				if s.FlexDirection == "" { s.FlexDirection = "row" }
+				if s.AlignItems == "" { s.AlignItems = "stretch" }
+			case "grid":
+				s.Display = "flex"; s.FlexDirection = "row"; s.FlexWrap = "wrap"
+			case "inline", "inline-block", "inline-flex":
+				s.Display = "inline"
+			case "block":
+				s.Display = "block"
+			}
+		case "visibility":
+			if val == "hidden" { s.Hidden = true; s.Display = "none" }
+		case "position":
+			if val == "fixed" { s.Hidden = true; s.Display = "none" }
+		case "flex-direction":
+			s.FlexDirection = val
+		case "justify-content":
+			s.JustifyContent = val
+		case "align-items":
+			s.AlignItems = val
+		case "flex-wrap":
+			s.FlexWrap = val
+		case "gap":
+			if n := parsePx(val); n > 0 { s.Gap = n }
+		case "flex":
+			fields := strings.Fields(val)
+			if len(fields) > 0 {
+				var f float64
+				fmt.Sscanf(fields[0], "%f", &f)
+				if f > 0 { s.FlexGrow = f }
+			}
+		case "padding":
+			if n := parsePx(val); n > 0 {
+				s.PaddingT, s.PaddingR, s.PaddingB, s.PaddingL = n, n, n, n
+			}
+		case "padding-top":
+			if n := parsePx(val); n > 0 { s.PaddingT = n }
+		case "padding-bottom":
+			if n := parsePx(val); n > 0 { s.PaddingB = n }
+		case "padding-left":
+			if n := parsePx(val); n > 0 { s.PaddingL = n }
+		case "padding-right":
+			if n := parsePx(val); n > 0 { s.PaddingR = n }
+		case "margin":
+			if n := parsePx(val); n > 0 { s.MarginT, s.MarginB = n, n }
+		case "margin-top":
+			if n := parsePx(val); n >= 0 { s.MarginT = n }
+		case "margin-bottom":
+			if n := parsePx(val); n >= 0 { s.MarginB = n }
+		case "margin-left":
+			if n := parsePx(val); n >= 0 { s.MarginL = n }
+		case "margin-right":
+			if n := parsePx(val); n >= 0 { s.MarginR = n }
+		case "text-decoration":
+			s.Underline = strings.Contains(val, "underline")
+		case "text-align":
+			// stored but not used for layout yet
+		case "border-radius":
+			// stored but not used for rendering yet
 		}
 	}
+}
+
+func parsePx(val string) int {
+	val = strings.TrimSpace(val)
+	val = strings.TrimSuffix(val, "px")
+	val = strings.TrimSuffix(val, "!important")
+	val = strings.TrimSpace(val)
+	n := 0
+	fmt.Sscanf(val, "%d", &n)
+	return n
 }
 
 // IsHiddenByCSS checks if an element matches any CSS hidden selector.
