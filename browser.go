@@ -28,6 +28,8 @@ type Page struct {
 	Scripts    []Script
 	LastLayout *Box // cached layout for hit testing
 	Cookies    map[string]string
+	docListeners map[string][]*espresso.Value // document event listeners
+	winListeners map[string][]*espresso.Value // window event listeners
 }
 
 // NewBrowser creates a new headless browser.
@@ -58,8 +60,10 @@ func (b *Browser) NewPage() *Page {
 	p := &Page{
 		Browser:   b,
 		UserAgent: b.UserAgent,
-		VM:        espresso.New(),
-		Cookies:   make(map[string]string),
+		VM:           espresso.New(),
+		Cookies:      make(map[string]string),
+		docListeners: make(map[string][]*espresso.Value),
+		winListeners: make(map[string][]*espresso.Value),
 	}
 	b.Pages = append(b.Pages, p)
 	return p
@@ -101,6 +105,9 @@ func (p *Page) Navigate(url string) error {
 	p.Scripts = ExtractScripts(p.Doc)
 	p.executeScriptsWithTimeout(5 * time.Second)
 
+	// Fire lifecycle events
+	p.fireLifecycleEvents()
+
 	return nil
 }
 
@@ -133,6 +140,7 @@ func (p *Page) LoadHTML(html string) {
 	p.setupJS()
 	p.Scripts = ExtractScripts(p.Doc)
 	p.executeScriptsWithTimeout(5 * time.Second)
+	p.fireLifecycleEvents()
 }
 
 // setupJS initializes the espresso VM with document, window, and Web APIs.
@@ -159,6 +167,40 @@ func (p *Page) setupJS() {
 		kv := strings.SplitN(strings.TrimSpace(parts[0]), "=", 2)
 		if len(kv) == 2 {
 			p.Cookies[strings.TrimSpace(kv[0])] = strings.TrimSpace(kv[1])
+		}
+		return espresso.Undefined
+	})
+
+	// document.addEventListener / removeEventListener
+	docJS.Object()["addEventListener"] = espresso.NewNativeFunc(func(args []*espresso.Value) *espresso.Value {
+		if len(args) >= 2 {
+			event := args[0].String()
+			p.docListeners[event] = append(p.docListeners[event], args[1])
+		}
+		return espresso.Undefined
+	})
+	docJS.Object()["dispatchEvent"] = espresso.NewNativeFunc(func(args []*espresso.Value) *espresso.Value {
+		if len(args) < 1 { return espresso.NewBool(false) }
+		eventType := ""
+		if args[0].IsObject() {
+			t := args[0].Get("type")
+			if t != nil && !t.IsUndefined() { eventType = t.String() }
+		} else {
+			eventType = args[0].String()
+		}
+		for _, cb := range p.docListeners[eventType] {
+			espresso.CallFuncValue(cb, []*espresso.Value{args[0]}, p.VM.Scope())
+		}
+		return espresso.NewBool(true)
+	})
+	docJS.Object()["removeEventListener"] = espresso.NewNativeFunc(func(args []*espresso.Value) *espresso.Value {
+		if len(args) >= 2 {
+			event := args[0].String()
+			cb := args[1]
+			listeners := p.docListeners[event]
+			for i, l := range listeners {
+				if l == cb { p.docListeners[event] = append(listeners[:i], listeners[i+1:]...); break }
+			}
 		}
 		return espresso.Undefined
 	})
@@ -280,6 +322,22 @@ func (p *Page) fetchExternalScript(url string) (string, error) {
 		return "", err
 	}
 	return string(body), nil
+}
+
+// fireLifecycleEvents dispatches DOMContentLoaded on document and load on window.
+func (p *Page) fireLifecycleEvents() {
+	fireAll := func(listeners []*espresso.Value) {
+		for _, cb := range listeners {
+			if cb.Type() == espresso.TypeFunc {
+				p.VM.SetValue("__lcb__", cb)
+				// Use CompileAndRun which uses the VM scope directly
+				p.VM.CompileAndRun("__lcb__();")
+			}
+		}
+	}
+	fireAll(p.docListeners["DOMContentLoaded"])
+	fireAll(p.winListeners["load"])
+	fireAll(p.docListeners["readystatechange"])
 }
 
 // Eval executes JavaScript in the page context.

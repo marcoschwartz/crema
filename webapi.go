@@ -156,29 +156,21 @@ func RegisterWebAPIs(vm *espresso.VM, page *Page) {
 	window.DefineGetter("navigator", func(args []*espresso.Value) *espresso.Value {
 		return buildNavigator(page)
 	})
-	// addEventListener / removeEventListener on window
-	windowListeners := map[string][]*espresso.Value{}
+	// addEventListener / removeEventListener on window — use page.winListeners
+	// so fireLifecycleEvents can dispatch to them
 	window.Object()["addEventListener"] = espresso.NewNativeFunc(func(args []*espresso.Value) *espresso.Value {
-		if len(args) < 2 {
-			return espresso.Undefined
-		}
+		if len(args) < 2 { return espresso.Undefined }
 		event := args[0].String()
-		cb := args[1]
-		windowListeners[event] = append(windowListeners[event], cb)
+		page.winListeners[event] = append(page.winListeners[event], args[1])
 		return espresso.Undefined
 	})
 	window.Object()["removeEventListener"] = espresso.NewNativeFunc(func(args []*espresso.Value) *espresso.Value {
-		if len(args) < 2 {
-			return espresso.Undefined
-		}
+		if len(args) < 2 { return espresso.Undefined }
 		event := args[0].String()
 		cb := args[1]
-		listeners := windowListeners[event]
+		listeners := page.winListeners[event]
 		for i, l := range listeners {
-			if l == cb {
-				windowListeners[event] = append(listeners[:i], listeners[i+1:]...)
-				break
-			}
+			if l == cb { page.winListeners[event] = append(listeners[:i], listeners[i+1:]...); break }
 		}
 		return espresso.Undefined
 	})
@@ -196,7 +188,7 @@ func RegisterWebAPIs(vm *espresso.VM, page *Page) {
 		} else {
 			eventType = eventObj.String()
 		}
-		for i, cb := range windowListeners[eventType] {
+		for i, cb := range page.winListeners[eventType] {
 			dispatchCallback(cb, eventObj, i)
 		}
 		return espresso.NewBool(true)

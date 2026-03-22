@@ -478,3 +478,133 @@ func TestJS_DocumentCookie(t *testing.T) {
 		t.Errorf("expected Cookies[name] = bob after overwrite, got %s", p.Cookies["name"])
 	}
 }
+
+// ── Lifecycle events ──
+
+func TestJS_DOMContentLoaded(t *testing.T) {
+	b := NewBrowser()
+	defer b.Close()
+	p := b.NewPage()
+	p.LoadHTML(`<html><body>
+		<div id="status">waiting</div>
+		<script>
+			document.addEventListener("DOMContentLoaded", function() {
+				document.getElementById("status").textContent = "loaded";
+			});
+		</script>
+	</body></html>`)
+
+	r, _ := p.Eval(`document.getElementById("status").textContent`)
+	if r.String() != "loaded" { t.Errorf("expected 'loaded', got '%s'", r.String()) }
+}
+
+func TestJS_WindowLoad(t *testing.T) {
+	b := NewBrowser()
+	defer b.Close()
+	p := b.NewPage()
+	p.LoadHTML(`<html><body>
+		<div id="status">waiting</div>
+		<script>
+			window.addEventListener("load", function() {
+				document.getElementById("status").textContent = "window loaded";
+			});
+		</script>
+	</body></html>`)
+
+	r, _ := p.Eval(`document.getElementById("status").textContent`)
+	if r.String() != "window loaded" { t.Errorf("expected 'window loaded', got '%s'", r.String()) }
+}
+
+func TestJS_DOMContentLoaded_Arrow(t *testing.T) {
+	b := NewBrowser()
+	defer b.Close()
+	p := b.NewPage()
+	p.LoadHTML(`<html><body>
+		<div id="s">0</div>
+		<script>
+			document.addEventListener("DOMContentLoaded", () => {
+				document.getElementById("s").textContent = "1";
+			});
+		</script>
+	</body></html>`)
+
+	r, _ := p.Eval(`document.getElementById("s").textContent`)
+	if r.String() != "1" { t.Errorf("expected '1', got '%s'", r.String()) }
+}
+
+// ── Lifecycle events ──
+
+func TestJS_DOMContentLoaded_Direct(t *testing.T) {
+	b := NewBrowser()
+	defer b.Close()
+	p := b.NewPage()
+	p.LoadHTML(`<html><body>
+		<div id="status">waiting</div>
+		<script>
+			document.addEventListener("DOMContentLoaded", function() {
+				document.getElementById("status").textContent = "loaded";
+			});
+		</script>
+	</body></html>`)
+
+	// Check DOM directly via Go
+	el := p.QuerySelector("#status")
+	if el != nil {
+		t.Logf("DOM element found, children: %d", len(el.Children))
+		for _, c := range el.Children {
+			if tn := nodeToText(c); tn != nil {
+				t.Logf("  text: %q", tn.Data)
+			}
+		}
+	}
+
+	// Also check via Eval
+	r, _ := p.Eval(`document.getElementById("status").textContent`)
+	t.Logf("JS textContent: %q", r.String())
+	t.Logf("docListeners DOMContentLoaded: %d", len(p.docListeners["DOMContentLoaded"]))
+}
+
+func TestJS_ManualCallback(t *testing.T) {
+	b := NewBrowser()
+	defer b.Close()
+	p := b.NewPage()
+	p.LoadHTML(`<html><body><div id="s">before</div></body></html>`)
+
+	// Manually call a function that modifies the DOM
+	p.VM.Run(`function myFn() { document.getElementById("s").textContent = "after"; }`)
+	p.VM.Run(`myFn();`)
+
+	r, _ := p.Eval(`document.getElementById("s").textContent`)
+	t.Logf("after myFn: %q", r.String())
+
+	// Check Go DOM
+	el := p.QuerySelector("#s")
+	if el != nil {
+		for _, c := range el.Children {
+			if tn := nodeToText(c); tn != nil {
+				t.Logf("Go DOM text: %q", tn.Data)
+			}
+		}
+	}
+}
+
+func TestJS_DirectSetter(t *testing.T) {
+	b := NewBrowser()
+	defer b.Close()
+	p := b.NewPage()
+	p.LoadHTML(`<html><body><div id="s">before</div></body></html>`)
+
+	// Direct one-liner
+	p.VM.Run(`document.getElementById("s").textContent = "after";`)
+
+	el := p.QuerySelector("#s")
+	if el != nil {
+		for _, c := range el.Children {
+			if tn := nodeToText(c); tn != nil {
+				t.Logf("text: %q", tn.Data)
+			}
+		}
+	}
+	r, _ := p.Eval(`document.getElementById("s").textContent`)
+	t.Logf("JS: %q", r.String())
+}
