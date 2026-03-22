@@ -1,9 +1,11 @@
 package crema
 
 import (
+	"fmt"
 	"os"
 	"strings"
 	"testing"
+	"time"
 )
 
 // ══════════════════════════════════════════════════════════════
@@ -1078,4 +1080,62 @@ func TestJS_MutationObserver(t *testing.T) {
 		obs.disconnect();
 	</script></body></html>`)
 	// Should not crash
+}
+
+func TestSiteAudit(t *testing.T) {
+	if testing.Short() { t.Skip() }
+	os.MkdirAll("/tmp/crema_now", 0755)
+	b := NewBrowser()
+	defer b.Close()
+	sites := []struct{ name, url string }{
+		{"example", "https://example.com"},
+		{"hn", "https://news.ycombinator.com"},
+		{"wikipedia", "https://en.wikipedia.org/wiki/Go_(programming_language)"},
+		{"lobsters", "https://lobste.rs"},
+		{"lite_cnn", "https://lite.cnn.com"},
+		{"mfws", "https://motherfuckingwebsite.com"},
+		{"jsonph", "https://jsonplaceholder.typicode.com"},
+		{"bbc", "https://www.bbc.com/news"},
+		{"w3schools", "https://www.w3schools.com/"},
+	}
+	for i, s := range sites {
+		p := b.NewPage()
+		start := time.Now()
+		err := p.Navigate(s.url)
+		navMs := time.Since(start).Milliseconds()
+		if err != nil { t.Logf("[%d] %-12s %5dms ERROR", i, s.name, navMs); continue }
+		start = time.Now()
+		p.ScreenshotFileSize(fmt.Sprintf("/tmp/crema_now/%02d_%s.png", i, s.name), 1280, 900)
+		ssMs := time.Since(start).Milliseconds()
+		title := p.Title(); if len(title) > 30 { title = title[:30] + "..." }
+		t.Logf("[%d] %-12s %5dms ss=%5dms links=%-5d imgs=%-3d %s",
+			i, s.name, navMs, ssMs, len(p.QuerySelectorAll("a")), len(p.QuerySelectorAll("img")), title)
+	}
+}
+
+func TestSite_Adultfolio(t *testing.T) {
+	if testing.Short() { t.Skip() }
+	b := NewBrowser()
+	defer b.Close()
+	p := b.NewPage()
+	start := time.Now()
+	err := p.Navigate("https://www.adultfolio.com/")
+	navMs := time.Since(start).Milliseconds()
+	if err != nil { t.Fatalf("nav error after %dms: %v", navMs, err) }
+	
+	title := p.Title()
+	links := len(p.QuerySelectorAll("a"))
+	imgs := len(p.QuerySelectorAll("img"))
+	
+	t.Logf("nav=%dms title=%q links=%d imgs=%d", navMs, title, links, imgs)
+	
+	start = time.Now()
+	p.ScreenshotFileSize("/tmp/crema_adultfolio.png", 1280, 900)
+	t.Logf("screenshot=%dms", time.Since(start).Milliseconds())
+	
+	if title == "Just a moment..." {
+		t.Log("Got Cloudflare challenge page")
+	} else {
+		t.Logf("Got real page: %s", title)
+	}
 }
