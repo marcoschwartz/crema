@@ -1139,3 +1139,23 @@ func TestSite_Adultfolio(t *testing.T) {
 		t.Logf("Got real page: %s", title)
 	}
 }
+
+func TestRendering_DarkBgContrast(t *testing.T) {
+	b := NewBrowser()
+	defer b.Close()
+	p := b.NewPage()
+	p.LoadHTML(`<html><body style="background-color: #1a1a2e; color: white;">
+		<h1>Dark Theme</h1>
+		<a href="/">Home Link</a>
+		<a href="/about">About Link</a>
+		<footer style="background-color: #111;">
+			<a href="/terms">Terms</a>
+			<a href="/privacy">Privacy</a>
+		</footer>
+	</body></html>`)
+	p.ScreenshotFileSize("/tmp/test_dark.png", 800, 400)
+
+	// Verify layout produces content
+	root := Layout(p.Doc, 800, 400)
+	if root == nil { t.Fatal("no layout") }
+}

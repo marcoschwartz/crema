@@ -112,6 +112,24 @@ func Layout(doc *Document, viewportW, viewportH int) *Box {
 		return root
 	}
 
+	// Apply body's background color to root if specified
+	bodyStyle := computeStyle(body, root)
+	if bodyStyle.BGColor.A > 0 {
+		root.Style.BGColor = bodyStyle.BGColor
+	}
+	if bodyStyle.Color.R != colorDarkGray.R || bodyStyle.Color.G != colorDarkGray.G || bodyStyle.Color.B != colorDarkGray.B {
+		root.Style.Color = bodyStyle.Color
+	}
+
+	// Also check <html> element for background
+	htmlEl := findChildElement(&doc.Node, "HTML")
+	if htmlEl != nil {
+		htmlStyle := computeStyle(htmlEl, root)
+		if htmlStyle.BGColor.A > 0 && root.Style.BGColor == colorWhite {
+			root.Style.BGColor = htmlStyle.BGColor
+		}
+	}
+
 	// Center content with max width
 	contentW := viewportW
 	if contentW > maxContentWidth+bodyPaddingX*2 {
@@ -1233,20 +1251,26 @@ func computeStyle(el *Element, parent *Box) BoxStyle {
 		parseInlineStyle(style, &s)
 	}
 
-	// Auto-contrast: if background is dark and text color is also dark, lighten text
+	// Auto-contrast: ensure text is readable on its background
+	isDarkBG := false
 	if s.BGColor.A > 0 {
 		bgLum := int(s.BGColor.R)*299 + int(s.BGColor.G)*587 + int(s.BGColor.B)*114
-		txtLum := int(s.Color.R)*299 + int(s.Color.G)*587 + int(s.Color.B)*114
-		if bgLum < 128000 && txtLum < 128000 {
-			// Dark bg + dark text → make text white
-			s.Color = colorWhite
-		}
+		isDarkBG = bgLum < 128000
 	}
-	// Inherit parent dark bg contrast
-	if parent.Style.BGColor.A > 0 && s.BGColor.A == 0 {
+	// Inherit parent dark bg
+	if !isDarkBG && parent.Style.BGColor.A > 0 && s.BGColor.A == 0 {
 		bgLum := int(parent.Style.BGColor.R)*299 + int(parent.Style.BGColor.G)*587 + int(parent.Style.BGColor.B)*114
-		if bgLum < 128000 {
-			s.Color = colorWhite
+		isDarkBG = bgLum < 128000
+	}
+	if isDarkBG {
+		txtLum := int(s.Color.R)*299 + int(s.Color.G)*587 + int(s.Color.B)*114
+		if txtLum < 128000 {
+			if el.TagName == "A" {
+				// Links on dark bg → light blue (readable)
+				s.Color = Color{100, 180, 255, 255}
+			} else {
+				s.Color = colorWhite
+			}
 		}
 	}
 
@@ -1459,6 +1483,13 @@ func parseInlineStyle(style string, s *BoxStyle) {
 			s.FlexDirection = "row"
 			s.FlexWrap = "wrap"
 			if s.Gap == 0 { s.Gap = 16 }
+		case "background-image":
+			// If background-image is set with a gradient or image, set a fallback bg
+			if strings.Contains(val, "gradient") || strings.Contains(val, "url(") {
+				if s.BGColor.A == 0 {
+					s.BGColor = colorLightGray // fallback so it's visible
+				}
+			}
 		case "overflow":
 			if val == "hidden" || val == "auto" || val == "scroll" {
 				// For rendering purposes, we just let content clip naturally
@@ -1480,7 +1511,14 @@ func parseInlineStyle(style string, s *BoxStyle) {
 				// percentage widths — ignore for now, layout uses available width
 			}
 		case "height":
-			// explicit heights — ignore for now
+			if n, err := strconv.Atoi(strings.TrimSuffix(val, "px")); err == nil && n > 0 {
+				// Store as minimum height hint (used by block layout)
+				s.PaddingB = max(s.PaddingB, n/4) // approximate — give some height
+			}
+		case "min-height":
+			if n, err := strconv.Atoi(strings.TrimSuffix(val, "px")); err == nil && n > 0 {
+				s.PaddingB = max(s.PaddingB, n/4)
+			}
 		case "position":
 			if val == "fixed" {
 				// Fixed elements (sticky headers, cookie banners, floating buttons)
