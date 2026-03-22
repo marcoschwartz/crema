@@ -227,7 +227,7 @@ func layoutChildren(el *Element, parent *Box, x int, y *int, availW int, viewpor
 						box.Style.Bold = true
 					}
 					parent.Children = append(parent.Children, box)
-					inlineX += box.W + 4 // small gap between inline elements
+					inlineX += box.W + 10 // gap between inline elements
 					if box.H > maxH { maxH = box.H }
 				}
 				i++
@@ -885,8 +885,11 @@ func computeStyle(el *Element, parent *Box) BoxStyle {
 	case "DIV":
 		s.MarginT = 2
 		s.MarginB = 2
-	case "SPAN", "SMALL", "SUB", "SUP", "LABEL":
+	case "SPAN", "LABEL":
 		s.Display = "inline"
+	case "SMALL", "SUB", "SUP":
+		s.Display = "inline"
+		s.FontSize = parent.Style.FontSize * 8 / 10
 	case "A":
 		s.Display = "inline"
 		if isInsideTag(el, "NAV") || (isInsideTag(el, "HEADER") && isParentNavLike(el)) {
@@ -905,7 +908,7 @@ func computeStyle(el *Element, parent *Box) BoxStyle {
 	case "U":
 		s.Display = "inline"
 		s.Underline = true
-	case "CODE":
+	case "CODE", "MARK", "ABBR", "TIME", "CITE", "Q", "VAR", "KBD", "SAMP", "BDO", "BDI", "WBR", "DATA", "OUTPUT":
 		s.Display = "inline"
 		s.BGColor = Color{245, 245, 245, 255}
 		s.PaddingL = 3
@@ -918,7 +921,7 @@ func computeStyle(el *Element, parent *Box) BoxStyle {
 		if isInsideTag(el, "NAV") || (isInsideTag(el, "HEADER") && isNavLikeList(el)) {
 			s.Display = "flex"
 			s.FlexDirection = "row"
-			s.Gap = 6
+			s.Gap = 16
 			s.PaddingL = 0
 			s.MarginT = 0
 			s.MarginB = 0
@@ -930,6 +933,10 @@ func computeStyle(el *Element, parent *Box) BoxStyle {
 		if isInsideTag(el, "NAV") || (isInsideTag(el, "HEADER") && isParentNavLike(el)) {
 			s.Display = "inline"
 			s.MarginB = 0
+		} else {
+			// Content lists: add subtle separator for readability
+			s.PaddingB = 4
+			s.BorderW = 0
 		}
 	case "NAV", "HEADER":
 		s.PaddingT = 12
@@ -948,9 +955,40 @@ func computeStyle(el *Element, parent *Box) BoxStyle {
 		s.MarginT = 24
 		s.FontSize = 13
 		s.Color = colorGray
-	case "SECTION", "ARTICLE", "MAIN":
+	case "SECTION", "MAIN":
 		s.PaddingT = 4
 		s.PaddingB = 4
+	case "ARTICLE":
+		s.PaddingT = 4
+		s.PaddingB = 12
+		s.MarginB = 12
+		s.BorderW = 1
+		s.BorderColor = Color{235, 235, 235, 255}
+	case "FIGURE":
+		s.MarginT = 8
+		s.MarginB = 8
+		s.PaddingT = 4
+		s.PaddingB = 4
+	case "FIGCAPTION":
+		s.FontSize = 13
+		s.Color = colorGray
+		s.MarginT = 4
+	case "DETAILS":
+		s.MarginT = 4
+		s.MarginB = 4
+		s.PaddingL = 8
+	case "SUMMARY":
+		s.Bold = true
+		s.MarginB = 4
+	case "DL":
+		s.MarginT = 8
+		s.MarginB = 8
+	case "DT":
+		s.Bold = true
+		s.MarginT = 8
+	case "DD":
+		s.PaddingL = 24
+		s.MarginB = 4
 	case "BLOCKQUOTE":
 		s.PaddingL = 16
 		s.PaddingT = 8
@@ -1022,6 +1060,23 @@ func computeStyle(el *Element, parent *Box) BoxStyle {
 	// Parse inline style attribute
 	if style := el.GetAttribute("style"); style != "" {
 		parseInlineStyle(style, &s)
+	}
+
+	// Auto-contrast: if background is dark and text color is also dark, lighten text
+	if s.BGColor.A > 0 {
+		bgLum := int(s.BGColor.R)*299 + int(s.BGColor.G)*587 + int(s.BGColor.B)*114
+		txtLum := int(s.Color.R)*299 + int(s.Color.G)*587 + int(s.Color.B)*114
+		if bgLum < 128000 && txtLum < 128000 {
+			// Dark bg + dark text → make text white
+			s.Color = colorWhite
+		}
+	}
+	// Inherit parent dark bg contrast
+	if parent.Style.BGColor.A > 0 && s.BGColor.A == 0 {
+		bgLum := int(parent.Style.BGColor.R)*299 + int(parent.Style.BGColor.G)*587 + int(parent.Style.BGColor.B)*114
+		if bgLum < 128000 {
+			s.Color = colorWhite
+		}
 	}
 
 	if el.HasAttribute("hidden") {
