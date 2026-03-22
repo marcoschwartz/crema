@@ -1,6 +1,7 @@
 package crema
 
 import (
+	"fmt"
 	"strconv"
 	"strings"
 )
@@ -352,6 +353,50 @@ func layoutBlock(cel *Element, parent *Box, x int, y *int, availW int, viewportW
 		box.Style.PaddingL = 8
 		parent.Children = append(parent.Children, box)
 		*y += box.H + style.MarginB
+		return
+
+	case "TEXTAREA":
+		placeholder := cel.GetAttribute("placeholder")
+		if placeholder == "" { placeholder = extractPlainText(cel) }
+		box.InputType = "textarea"
+		box.Placeholder = placeholder
+		rows := 4
+		if rs := cel.GetAttribute("rows"); rs != "" {
+			fmt.Sscanf(rs, "%d", &rows)
+		}
+		lh := fontLineHeight(style.FontSize)
+		box.H = lh*rows + 16
+		box.W = innerW
+		box.Style.BorderW = 1
+		box.Style.BorderColor = colorInputBorder
+		box.Style.BGColor = colorInputBG
+		box.Style.PaddingL = 8
+		box.Style.PaddingT = 6
+		parent.Children = append(parent.Children, box)
+		*y += box.H + style.MarginB + 4
+		return
+
+	case "SELECT":
+		// Render as a dropdown-like box showing the first option
+		text := "Select..."
+		for _, child := range cel.Children {
+			if opt := nodeToElement(child); opt != nil && opt.TagName == "OPTION" {
+				optText := extractPlainText(opt)
+				if optText != "" { text = optText; break }
+			}
+		}
+		box.Text = text + " ▾"
+		lh := fontLineHeight(style.FontSize)
+		tw := measureText(box.Text, style.FontSize, false)
+		box.H = lh + 16
+		box.W = tw + 40
+		box.Style.BorderW = 1
+		box.Style.BorderColor = colorInputBorder
+		box.Style.BGColor = colorInputBG
+		box.Style.PaddingL = 8
+		box.Style.PaddingT = 4
+		parent.Children = append(parent.Children, box)
+		*y += box.H + style.MarginB + 4
 		return
 
 	case "HR":
@@ -962,7 +1007,15 @@ func computeStyle(el *Element, parent *Box) BoxStyle {
 		s.MarginT = 4
 		s.MarginB = 4
 		s.MarginR = 4
-	case "INPUT", "TEXTAREA", "SELECT":
+	case "INPUT":
+		s.MarginB = 4
+	case "TEXTAREA":
+		s.MarginB = 8
+		s.PaddingT = 8
+		s.PaddingL = 8
+		s.PaddingR = 8
+		s.PaddingB = 8
+	case "SELECT":
 		s.MarginB = 4
 	}
 
