@@ -233,20 +233,43 @@ func compareImages(cremaImg, chromeImg *image.RGBA, w, h int) (*image.RGBA, floa
 			cr /= fc; cg /= fc; cb /= fc
 			hr /= fc; hg /= fc; hb /= fc
 
-			// Compare block: is it the same general color/brightness?
-			dr := math.Abs(cr - hr)
-			dg := math.Abs(cg - hg)
-			db := math.Abs(cb - hb)
-			dist := (dr + dg + db) / 3
-
-			// Also compare "is content present" — both bright or both dark?
+			// ── Layout-focused comparison ──
+			// Classify each block as: empty (background), content (text/images), or UI (buttons/borders)
+			// Match if both blocks have the same classification, regardless of color.
 			cremaLum := cr*0.299 + cg*0.587 + cb*0.114
 			chromeLum := hr*0.299 + hg*0.587 + hb*0.114
-			bothEmpty := cremaLum > 240 && chromeLum > 240  // both white/near-white
-			bothDark := cremaLum < 50 && chromeLum < 50      // both dark
-			sameContent := bothEmpty || bothDark || math.Abs(cremaLum-chromeLum) < 60
 
-			matched := dist < 40 || sameContent
+			// Variance within block — high variance means text/edges, low means flat bg
+			var cremaVar, chromeVar float64
+			for dy := 0; dy < blockSize; dy++ {
+				for dx := 0; dx < blockSize; dx++ {
+					px := bx*blockSize + dx
+					py := by*blockSize + dy
+					if px >= maxW || py >= maxH { continue }
+					r1, g1, b1, _ := cremaImg.At(px, py).RGBA()
+					l1 := float64(r1>>8)*0.299 + float64(g1>>8)*0.587 + float64(b1>>8)*0.114
+					cremaVar += (l1 - cremaLum) * (l1 - cremaLum)
+					r2, g2, b2, _ := chromeImg.At(px, py).RGBA()
+					l2 := float64(r2>>8)*0.299 + float64(g2>>8)*0.587 + float64(b2>>8)*0.114
+					chromeVar += (l2 - chromeLum) * (l2 - chromeLum)
+				}
+			}
+			cremaVar /= fc
+			chromeVar /= fc
+
+			// Block type: "empty" (low variance, any brightness) vs "content" (high variance = text/edges)
+			cremaHasContent := cremaVar > 200   // text/images have high pixel variance
+			chromeHasContent := chromeVar > 200
+
+			// Match conditions (layout-focused, color-independent):
+			// 1. Both empty (both are background — color doesn't matter)
+			// 2. Both have content (both have text/images — position matches)
+			// 3. Similar brightness class (both dark or both light)
+			bothEmpty := !cremaHasContent && !chromeHasContent
+			bothContent := cremaHasContent && chromeHasContent
+			sameBrightness := math.Abs(cremaLum - chromeLum) < 80
+
+			matched := bothEmpty || bothContent || sameBrightness
 
 			// Paint diff block
 			for dy := 0; dy < blockSize; dy++ {
@@ -255,13 +278,12 @@ func compareImages(cremaImg, chromeImg *image.RGBA, w, h int) (*image.RGBA, floa
 					py := by*blockSize + dy
 					if px >= maxW || py >= maxH { continue }
 					if matched {
-						// Blend crema + chrome for context
+						// Show crema image with slight green tint for matched
 						r1, g1, b1, _ := cremaImg.At(px, py).RGBA()
 						diff.Set(px, py, color.RGBA{uint8(r1>>8), uint8(g1>>8), uint8(b1>>8), 255})
 					} else {
-						// Red highlight with intensity
-						intensity := uint8(math.Min(255, dist*3))
-						diff.Set(px, py, color.RGBA{intensity, 0, 0, 255})
+						// Red for mismatched layout
+						diff.Set(px, py, color.RGBA{200, 30, 30, 255})
 					}
 				}
 			}

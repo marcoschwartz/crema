@@ -1323,6 +1323,16 @@ func computeStyle(el *Element, parent *Box) BoxStyle {
 	if totalChildCount > 0 && floatChildCount*2 >= totalChildCount {
 		hasFloatChildren = true
 	}
+	// Also detect divs full of images (avatar rows, photo grids)
+	imgChildCount := 0
+	for _, child := range el.Children {
+		if cel := nodeToElement(child); cel != nil && cel.TagName == "IMG" {
+			imgChildCount++
+		}
+	}
+	if imgChildCount >= 3 && imgChildCount*2 >= totalChildCount {
+		hasFloatChildren = true // treat image rows as flex
+	}
 	if hasFloatChildren && s.Display != "flex" {
 		s.Display = "flex"
 		s.FlexDirection = "row"
