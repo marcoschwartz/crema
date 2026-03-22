@@ -272,6 +272,21 @@ func NewTextNode(data string) *TextNode {
 // We store the concrete type pointer in a map keyed by *Node.
 var nodeRegistry = map[*Node]interface{}{}
 
+// jsToNodeMap maps JS Values back to their DOM nodes for appendChild etc.
+var jsToNodeMap = map[*espresso.Value]*Node{}
+
+// RegisterJSNode registers a mapping from a JS Value to a DOM Node.
+func registerJSNode(jsVal *espresso.Value, node *Node) {
+	jsToNodeMap[jsVal] = node
+}
+
+// nodeFromJS extracts a DOM Node from a JS Value.
+func nodeFromJS(jsVal *espresso.Value) *Node {
+	if jsVal == nil { return nil }
+	if n, ok := jsToNodeMap[jsVal]; ok { return n }
+	return nil
+}
+
 func RegisterNode(n *Node, concrete interface{}) {
 	nodeRegistry[n] = concrete
 }
@@ -508,7 +523,68 @@ func elementToJS(el *Element) *espresso.Value {
 		return espresso.Undefined
 	})
 	v.Object()["appendChild"] = espresso.NewNativeFunc(func(args []*espresso.Value) *espresso.Value {
-		return espresso.Undefined
+		if len(args) == 0 { return espresso.Null }
+		childNode := nodeFromJS(args[0])
+		if childNode != nil {
+			// Remove from old parent if exists
+			if childNode.Parent != nil {
+				childNode.Parent.RemoveChild(childNode)
+			}
+			el.AppendChild(childNode)
+		}
+		return args[0]
+	})
+	v.Object()["removeChild"] = espresso.NewNativeFunc(func(args []*espresso.Value) *espresso.Value {
+		if len(args) == 0 { return espresso.Null }
+		childNode := nodeFromJS(args[0])
+		if childNode != nil {
+			el.RemoveChild(childNode)
+		}
+		return args[0]
+	})
+	v.Object()["insertBefore"] = espresso.NewNativeFunc(func(args []*espresso.Value) *espresso.Value {
+		if len(args) < 2 { return espresso.Null }
+		newNode := nodeFromJS(args[0])
+		refNode := nodeFromJS(args[1])
+		if newNode != nil {
+			if newNode.Parent != nil { newNode.Parent.RemoveChild(newNode) }
+			if refNode != nil {
+				// Insert before refNode
+				for i, c := range el.Children {
+					if c == refNode {
+						newNode.Parent = &el.Node
+						el.Children = append(el.Children[:i], append([]*Node{newNode}, el.Children[i:]...)...)
+						return args[0]
+					}
+				}
+			}
+			// Fallback: append
+			el.AppendChild(newNode)
+		}
+		return args[0]
+	})
+	v.Object()["replaceChild"] = espresso.NewNativeFunc(func(args []*espresso.Value) *espresso.Value {
+		if len(args) < 2 { return espresso.Null }
+		newNode := nodeFromJS(args[0])
+		oldNode := nodeFromJS(args[1])
+		if newNode != nil && oldNode != nil {
+			if newNode.Parent != nil { newNode.Parent.RemoveChild(newNode) }
+			for i, c := range el.Children {
+				if c == oldNode {
+					newNode.Parent = &el.Node
+					oldNode.Parent = nil
+					el.Children[i] = newNode
+					return args[1]
+				}
+			}
+		}
+		return args[1]
+	})
+	v.Object()["cloneNode"] = espresso.NewNativeFunc(func(args []*espresso.Value) *espresso.Value {
+		deep := false
+		if len(args) > 0 { deep = args[0].Bool() }
+		clone := cloneElement(el, deep)
+		return elementToJS(clone)
 	})
 	v.Object()["matches"] = espresso.NewNativeFunc(func(args []*espresso.Value) *espresso.Value {
 		if len(args) == 0 { return espresso.NewBool(false) }
@@ -587,9 +663,22 @@ func elementToJS(el *Element) *espresso.Value {
 		el.StyleMap = make(map[string]string)
 	}
 	styleObj := espresso.NewObj(map[string]*espresso.Value{})
-	styleProps := []string{"display", "visibility", "color", "backgroundColor", "fontSize",
-		"width", "height", "margin", "padding", "border", "position", "top", "left",
-		"right", "bottom", "overflow", "opacity", "zIndex", "textAlign", "fontWeight"}
+	styleProps := []string{
+		"display", "visibility", "color", "backgroundColor", "background",
+		"fontSize", "fontWeight", "fontStyle", "fontFamily", "lineHeight",
+		"width", "height", "minWidth", "minHeight", "maxWidth", "maxHeight",
+		"margin", "marginTop", "marginBottom", "marginLeft", "marginRight",
+		"padding", "paddingTop", "paddingBottom", "paddingLeft", "paddingRight",
+		"border", "borderWidth", "borderColor", "borderStyle", "borderRadius",
+		"position", "top", "left", "right", "bottom",
+		"overflow", "overflowX", "overflowY",
+		"opacity", "zIndex", "textAlign", "textDecoration", "textTransform",
+		"float", "clear", "cursor", "pointerEvents", "userSelect",
+		"flexDirection", "justifyContent", "alignItems", "flexWrap", "gap", "flex",
+		"gridTemplateColumns", "gridTemplateRows", "gridGap",
+		"transform", "transition", "animation",
+		"boxShadow", "outline", "whiteSpace", "wordBreak", "overflowWrap",
+	}
 	for _, prop := range styleProps {
 		p := prop // capture
 		styleObj.DefineGetter(p, func(args []*espresso.Value) *espresso.Value {
@@ -605,6 +694,36 @@ func elementToJS(el *Element) *espresso.Value {
 			return espresso.Undefined
 		})
 	}
+	styleObj.DefineGetter("cssText", func(args []*espresso.Value) *espresso.Value {
+		var parts []string
+		for k, v := range el.StyleMap { parts = append(parts, k+": "+v) }
+		return espresso.NewStr(strings.Join(parts, "; "))
+	})
+	styleObj.DefineSetter("cssText", func(args []*espresso.Value) *espresso.Value {
+		if len(args) > 0 {
+			el.StyleMap = make(map[string]string)
+			for _, decl := range strings.Split(args[0].String(), ";") {
+				decl = strings.TrimSpace(decl)
+				ci := strings.Index(decl, ":")
+				if ci > 0 { el.StyleMap[strings.TrimSpace(decl[:ci])] = strings.TrimSpace(decl[ci+1:]) }
+			}
+		}
+		return espresso.Undefined
+	})
+	styleObj.Object()["setProperty"] = espresso.NewNativeFunc(func(args []*espresso.Value) *espresso.Value {
+		if len(args) >= 2 { el.StyleMap[args[0].String()] = args[1].String() }
+		return espresso.Undefined
+	})
+	styleObj.Object()["getPropertyValue"] = espresso.NewNativeFunc(func(args []*espresso.Value) *espresso.Value {
+		if len(args) > 0 {
+			if v, ok := el.StyleMap[args[0].String()]; ok { return espresso.NewStr(v) }
+		}
+		return espresso.NewStr("")
+	})
+	styleObj.Object()["removeProperty"] = espresso.NewNativeFunc(func(args []*espresso.Value) *espresso.Value {
+		if len(args) > 0 { delete(el.StyleMap, args[0].String()) }
+		return espresso.Undefined
+	})
 	v.Object()["style"] = styleObj
 
 	// classList object
@@ -661,6 +780,7 @@ func elementToJS(el *Element) *espresso.Value {
 	v.Object()["classList"] = classList
 
 	el.jsValue = v
+	registerJSNode(v, &el.Node)
 	return v
 }
 
@@ -689,6 +809,7 @@ func textToJS(tn *TextNode) *espresso.Value {
 		return NodeToJS(tn.Parent)
 	})
 	tn.jsValue = v
+	registerJSNode(v, &tn.Node)
 	return v
 }
 
@@ -750,6 +871,15 @@ func DocumentToJS(doc *Document) *espresso.Value {
 		tn.OwnerDoc = doc
 		RegisterNode(&tn.Node, tn)
 		return textToJS(tn)
+	})
+
+	// createDocumentFragment
+	v.Object()["createDocumentFragment"] = espresso.NewNativeFunc(func(args []*espresso.Value) *espresso.Value {
+		// Fragment acts like an element but doesn't render — its children get appended to parent
+		frag := NewElement("fragment")
+		frag.OwnerDoc = doc
+		RegisterNode(&frag.Node, frag)
+		return elementToJS(frag)
 	})
 
 	// getElementById
@@ -890,6 +1020,27 @@ func findChildElement(n *Node, tag string) *Element {
 		}
 	}
 	return nil
+}
+
+func cloneElement(el *Element, deep bool) *Element {
+	clone := NewElement(strings.ToLower(el.TagName))
+	for k, v := range el.Attrs {
+		clone.SetAttribute(k, v)
+	}
+	RegisterNode(&clone.Node, clone)
+	if deep {
+		for _, child := range el.Children {
+			if cel := nodeToElement(child); cel != nil {
+				childClone := cloneElement(cel, true)
+				clone.AppendChild(&childClone.Node)
+			} else if tn := nodeToText(child); tn != nil {
+				tnClone := NewTextNode(tn.Data)
+				RegisterNode(&tnClone.Node, tnClone)
+				clone.AppendChild(&tnClone.Node)
+			}
+		}
+	}
+	return clone
 }
 
 func CollectTextFromElement(el *Element, sb *strings.Builder) {

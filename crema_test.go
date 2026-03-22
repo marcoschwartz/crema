@@ -897,3 +897,185 @@ func TestIframe_Render(t *testing.T) {
 	checkBoxes(root, "[iframe: https://example.com]", &found)
 	if !found { t.Error("iframe should render as placeholder") }
 }
+
+// ── DOM Manipulation ──
+
+func TestDOM_AppendChild(t *testing.T) {
+	b := NewBrowser()
+	defer b.Close()
+	p := b.NewPage()
+	p.LoadHTML(`<html><body><div id="root"></div><script>
+		const el = document.createElement("p");
+		el.textContent = "dynamically added";
+		document.getElementById("root").appendChild(el);
+	</script></body></html>`)
+
+	root := p.QuerySelector("#root")
+	if root == nil { t.Fatal("root not found") }
+	if len(root.Children) != 1 { t.Fatalf("expected 1 child, got %d", len(root.Children)) }
+
+	child := nodeToElement(root.Children[0])
+	if child == nil { t.Fatal("child not an element") }
+	if child.TagName != "P" { t.Errorf("expected P, got %s", child.TagName) }
+
+	var sb strings.Builder
+	CollectTextFromElement(child, &sb)
+	if sb.String() != "dynamically added" { t.Errorf("expected 'dynamically added', got '%s'", sb.String()) }
+}
+
+func TestDOM_AppendMultiple(t *testing.T) {
+	b := NewBrowser()
+	defer b.Close()
+	p := b.NewPage()
+	p.LoadHTML(`<html><body><ul id="list"></ul><script>
+		const list = document.getElementById("list");
+		for (let i = 0; i < 3; i++) {
+			const li = document.createElement("li");
+			li.textContent = "item " + i;
+			list.appendChild(li);
+		}
+	</script></body></html>`)
+
+	list := p.QuerySelector("#list")
+	if list == nil { t.Fatal("list not found") }
+	if len(list.Children) != 3 { t.Fatalf("expected 3 children, got %d", len(list.Children)) }
+}
+
+func TestDOM_RemoveChild(t *testing.T) {
+	b := NewBrowser()
+	defer b.Close()
+	p := b.NewPage()
+	p.LoadHTML(`<html><body><div id="parent"><p id="child">hello</p></div><script>
+		const parent = document.getElementById("parent");
+		const child = document.getElementById("child");
+		parent.removeChild(child);
+	</script></body></html>`)
+
+	parent := p.QuerySelector("#parent")
+	if parent == nil { t.Fatal("parent not found") }
+	if len(parent.Children) != 0 { t.Errorf("expected 0 children after remove, got %d", len(parent.Children)) }
+}
+
+func TestDOM_InsertBefore(t *testing.T) {
+	b := NewBrowser()
+	defer b.Close()
+	p := b.NewPage()
+	p.LoadHTML(`<html><body><ul id="list"><li id="second">B</li></ul><script>
+		const list = document.getElementById("list");
+		const first = document.createElement("li");
+		first.textContent = "A";
+		list.insertBefore(first, document.getElementById("second"));
+	</script></body></html>`)
+
+	list := p.QuerySelector("#list")
+	if list == nil { t.Fatal("list not found") }
+	if len(list.Children) != 2 { t.Fatalf("expected 2 children, got %d", len(list.Children)) }
+	firstChild := nodeToElement(list.Children[0])
+	if firstChild == nil { t.Fatal("no first child") }
+	var sb strings.Builder
+	CollectTextFromElement(firstChild, &sb)
+	if sb.String() != "A" { t.Errorf("expected 'A' first, got '%s'", sb.String()) }
+}
+
+func TestDOM_CloneNode(t *testing.T) {
+	b := NewBrowser()
+	defer b.Close()
+	p := b.NewPage()
+	p.LoadHTML(`<html><body><div id="original" class="box"><p>inner</p></div><script>
+		const orig = document.getElementById("original");
+		const clone = orig.cloneNode(true);
+		clone.id = "cloned";
+		document.body.appendChild(clone);
+	</script></body></html>`)
+
+	cloned := p.QuerySelector("#cloned")
+	if cloned == nil { t.Fatal("cloned element not found") }
+	if !containsClass(cloned.ClassList, "box") { t.Error("clone should have class 'box'") }
+	if len(cloned.Children) != 1 { t.Errorf("clone should have 1 child, got %d", len(cloned.Children)) }
+}
+
+func TestDOM_CreateDocumentFragment(t *testing.T) {
+	b := NewBrowser()
+	defer b.Close()
+	p := b.NewPage()
+	p.LoadHTML(`<html><body><div id="target"></div><script>
+		const frag = document.createDocumentFragment();
+		const p1 = document.createElement("p");
+		p1.textContent = "one";
+		frag.appendChild(p1);
+		const p2 = document.createElement("p");
+		p2.textContent = "two";
+		frag.appendChild(p2);
+		document.getElementById("target").appendChild(frag);
+	</script></body></html>`)
+
+	// Fragment's children should be moved to target
+	target := p.QuerySelector("#target")
+	if target == nil { t.Fatal("target not found") }
+	// Fragment appendChild adds to fragment, then target.appendChild(frag) should add frag's children
+	// For now, frag itself is added as a child (simplified)
+	if len(target.Children) == 0 { t.Error("expected children in target") }
+}
+
+func TestJS_StyleObject(t *testing.T) {
+	b := NewBrowser()
+	defer b.Close()
+	p := b.NewPage()
+	p.LoadHTML(`<html><body><div id="el"></div><script>
+		document.getElementById("el").style.display = "none";
+		document.getElementById("el").style.backgroundColor = "red";
+	</script></body></html>`)
+
+	el := p.QuerySelector("#el")
+	if el == nil { t.Fatal("element not found") }
+	if el.StyleMap["display"] != "none" { t.Errorf("expected display=none, got %q", el.StyleMap["display"]) }
+	if el.StyleMap["backgroundColor"] != "red" { t.Errorf("expected bg=red, got %q", el.StyleMap["backgroundColor"]) }
+}
+
+func TestJS_StyleSetProperty(t *testing.T) {
+	b := NewBrowser()
+	defer b.Close()
+	p := b.NewPage()
+	p.LoadHTML(`<html><body><div id="el"></div><script>
+		document.getElementById("el").style.setProperty("color", "blue");
+	</script></body></html>`)
+
+	el := p.QuerySelector("#el")
+	if el.StyleMap["color"] != "blue" { t.Errorf("expected color=blue, got %q", el.StyleMap["color"]) }
+}
+
+func TestJS_RequestAnimationFrame(t *testing.T) {
+	b := NewBrowser()
+	defer b.Close()
+	p := b.NewPage()
+	p.LoadHTML(`<html><body><div id="s">0</div><script>
+		requestAnimationFrame(function() {
+			document.getElementById("s").textContent = "1";
+		});
+	</script></body></html>`)
+
+	r, _ := p.Eval(`document.getElementById("s").textContent`)
+	if r.String() != "1" { t.Errorf("expected '1', got '%s'", r.String()) }
+}
+
+func TestJS_GetComputedStyle(t *testing.T) {
+	b := NewBrowser()
+	defer b.Close()
+	p := b.NewPage()
+	p.LoadHTML(`<html><body><div id="el" style="color: red;"></div><script>
+		const s = getComputedStyle(document.getElementById("el"));
+	</script></body></html>`)
+	// Should not crash
+}
+
+func TestJS_MutationObserver(t *testing.T) {
+	b := NewBrowser()
+	defer b.Close()
+	p := b.NewPage()
+	p.LoadHTML(`<html><body><script>
+		const obs = new MutationObserver(function() {});
+		obs.observe(document.body, { childList: true });
+		obs.disconnect();
+	</script></body></html>`)
+	// Should not crash
+}

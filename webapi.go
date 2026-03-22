@@ -44,6 +44,26 @@ func RegisterWebAPIs(vm *espresso.VM, page *Page) {
 		return espresso.Undefined
 	}))
 
+	// requestAnimationFrame — call callback once synchronously
+	vm.Set("requestAnimationFrame", espresso.NewNativeFunc(func(args []*espresso.Value) *espresso.Value {
+		if len(args) > 0 && args[0].Type() == espresso.TypeFunc {
+			espresso.CallFuncValue(args[0], []*espresso.Value{espresso.NewNum(0)}, vm.Scope())
+		}
+		return espresso.NewNum(1)
+	}))
+	vm.Set("cancelAnimationFrame", espresso.NewNativeFunc(func(args []*espresso.Value) *espresso.Value {
+		return espresso.Undefined
+	}))
+
+	// getComputedStyle — returns element's style map
+	vm.Set("getComputedStyle", espresso.NewNativeFunc(func(args []*espresso.Value) *espresso.Value {
+		if len(args) == 0 { return espresso.NewObj(map[string]*espresso.Value{}) }
+		// Return the element's style object if available
+		style := args[0].Get("style")
+		if style != nil && !style.IsUndefined() { return style }
+		return espresso.NewObj(map[string]*espresso.Value{})
+	}))
+
 	// ─── fetch() ────────────────────────────────────────────
 	vm.Set("fetch", espresso.NewNativeFunc(func(args []*espresso.Value) *espresso.Value {
 		if len(args) == 0 {
@@ -132,6 +152,33 @@ func RegisterWebAPIs(vm *espresso.VM, page *Page) {
 		respObj.Object()["headers"] = headersObj
 
 		return espresso.MakeResolvedPromise(respObj)
+	}))
+
+	// MutationObserver stub
+	vm.Set("MutationObserver", espresso.NewNativeFunc(func(args []*espresso.Value) *espresso.Value {
+		obs := espresso.NewObj(map[string]*espresso.Value{})
+		obs.Object()["observe"] = espresso.NewNativeFunc(func(a []*espresso.Value) *espresso.Value { return espresso.Undefined })
+		obs.Object()["disconnect"] = espresso.NewNativeFunc(func(a []*espresso.Value) *espresso.Value { return espresso.Undefined })
+		obs.Object()["takeRecords"] = espresso.NewNativeFunc(func(a []*espresso.Value) *espresso.Value { return espresso.NewArr(nil) })
+		return obs
+	}))
+
+	// IntersectionObserver stub
+	vm.Set("IntersectionObserver", espresso.NewNativeFunc(func(args []*espresso.Value) *espresso.Value {
+		obs := espresso.NewObj(map[string]*espresso.Value{})
+		obs.Object()["observe"] = espresso.NewNativeFunc(func(a []*espresso.Value) *espresso.Value { return espresso.Undefined })
+		obs.Object()["disconnect"] = espresso.NewNativeFunc(func(a []*espresso.Value) *espresso.Value { return espresso.Undefined })
+		obs.Object()["unobserve"] = espresso.NewNativeFunc(func(a []*espresso.Value) *espresso.Value { return espresso.Undefined })
+		return obs
+	}))
+
+	// ResizeObserver stub
+	vm.Set("ResizeObserver", espresso.NewNativeFunc(func(args []*espresso.Value) *espresso.Value {
+		obs := espresso.NewObj(map[string]*espresso.Value{})
+		obs.Object()["observe"] = espresso.NewNativeFunc(func(a []*espresso.Value) *espresso.Value { return espresso.Undefined })
+		obs.Object()["disconnect"] = espresso.NewNativeFunc(func(a []*espresso.Value) *espresso.Value { return espresso.Undefined })
+		obs.Object()["unobserve"] = espresso.NewNativeFunc(func(a []*espresso.Value) *espresso.Value { return espresso.Undefined })
+		return obs
 	}))
 
 	// ─── window object ──────────────────────────────────────
