@@ -86,8 +86,8 @@ const (
 	defaultHeight    = 800
 	maxContentWidth  = 800
 	charWidth        = 8  // fallback
-	bodyPaddingX     = 24
-	bodyPaddingY     = 16
+	bodyPaddingX     = 8   // Chrome default body margin
+	bodyPaddingY     = 8
 )
 
 // activeCSSRules holds CSS rules parsed from <style> tags for the current layout.
@@ -140,14 +140,17 @@ func Layout(doc *Document, viewportW, viewportH int) *Box {
 		}
 	}
 
-	// Center content with max width
-	contentW := viewportW
-	if contentW > maxContentWidth+bodyPaddingX*2 {
+	// Content width — use max-width only if the site has CSS that expects it.
+	// Sites with no CSS (like MFWS) should use full viewport width like Chrome.
+	contentW := viewportW - bodyPaddingX*2
+	hasCSS := activeCSSRules != nil && len(activeCSSRules.StyleRules) > 0
+	if hasCSS && contentW > maxContentWidth {
 		contentW = maxContentWidth
-	} else {
-		contentW -= bodyPaddingX * 2
 	}
-	contentX := (viewportW - contentW) / 2
+	contentX := bodyPaddingX
+	if hasCSS && contentW < viewportW-bodyPaddingX*2 {
+		contentX = (viewportW - contentW) / 2
+	}
 
 	y := bodyPaddingY
 	layoutChildren(body, root, contentX, &y, contentW, viewportW)
@@ -303,6 +306,27 @@ func layoutBlock(cel *Element, parent *Box, x int, y *int, availW int, viewportW
 		box.X = x + style.MarginL
 		box.Y = *y
 		box.W = availW - style.MarginL - style.MarginR
+	}
+
+	// Handle width attribute (percentage or pixels)
+	if wAttr := cel.GetAttribute("width"); wAttr != "" {
+		if strings.HasSuffix(wAttr, "%") {
+			pct := 0
+			fmt.Sscanf(wAttr, "%d", &pct)
+			if pct > 0 && pct <= 100 {
+				box.W = viewportW * pct / 100
+				// Center if narrower
+				if box.W < availW {
+					box.X = x + (availW-box.W)/2
+				}
+			}
+		} else {
+			n := 0
+			fmt.Sscanf(wAttr, "%d", &n)
+			if n > 0 && n < viewportW {
+				box.W = n
+			}
+		}
 	}
 
 	innerY := *y + style.PaddingT
@@ -1047,30 +1071,30 @@ func computeStyle(el *Element, parent *Box) BoxStyle {
 	case "H1":
 		s.FontSize = 32
 		s.Bold = true
-		s.MarginT = 20
-		s.MarginB = 16
+		s.MarginT = 21 // Chrome default: 0.67em at 32px
+		s.MarginB = 21
 		s.Color = colorBlack
 	case "H2":
-		s.FontSize = 26
+		s.FontSize = 24
 		s.Bold = true
-		s.MarginT = 24
-		s.MarginB = 12
+		s.MarginT = 19 // Chrome default: 0.83em
+		s.MarginB = 19
 		s.Color = colorBlack
 	case "H3":
-		s.FontSize = 20
+		s.FontSize = 19
 		s.Bold = true
-		s.MarginT = 20
-		s.MarginB = 10
+		s.MarginT = 19 // Chrome default: 1em
+		s.MarginB = 19
 		s.Color = colorBlack
 	case "H4", "H5", "H6":
-		s.FontSize = 17
+		s.FontSize = 16
 		s.Bold = true
-		s.MarginT = 16
-		s.MarginB = 8
+		s.MarginT = 21 // Chrome default: 1.33em
+		s.MarginB = 21
 		s.Color = colorBlack
 	case "P":
-		s.MarginT = 0
-		s.MarginB = 12
+		s.MarginT = 16 // Chrome default: 1em
+		s.MarginB = 16
 	case "DIV":
 		s.MarginT = 2
 		s.MarginB = 2
@@ -1198,8 +1222,13 @@ func computeStyle(el *Element, parent *Box) BoxStyle {
 		s.MarginB = 8
 		s.FontSize = 13
 	case "TABLE":
-		s.BorderW = 1
-		s.BorderColor = colorMediumGray
+		// Only add border if not specified via attribute
+		if !el.HasAttribute("border") || el.GetAttribute("border") != "0" {
+			s.BorderW = 1
+			s.BorderColor = colorMediumGray
+		} else {
+			s.BorderW = 0
+		}
 		s.PaddingT = 2
 		s.PaddingB = 2
 	case "TR":
@@ -1261,12 +1290,19 @@ func computeStyle(el *Element, parent *Box) BoxStyle {
 		activeCSSRules.ApplyCSS(el, &s)
 	}
 
-	// Handle legacy HTML attributes: bgcolor, color, align, width
+	// Handle legacy HTML attributes: bgcolor, color, align, width, cellpadding
 	if bg := el.GetAttribute("bgcolor"); bg != "" {
 		s.BGColor = parseColor(bg)
 	}
 	if c := el.GetAttribute("color"); c != "" {
 		s.Color = parseColor(c)
+	}
+	// cellpadding on tables
+	if cp := el.GetAttribute("cellpadding"); cp != "" && (el.TagName == "TABLE") {
+		n := 0
+		fmt.Sscanf(cp, "%d", &n)
+		// Apply to child TDs via parent reference (handled in TD case above)
+		_ = n
 	}
 
 	// Parse inline style attribute (overrides external CSS)

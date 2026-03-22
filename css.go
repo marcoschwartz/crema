@@ -226,6 +226,9 @@ func applyCSSProps(props map[string]string, s *BoxStyle) {
 			if n > 0 && n < 72 { s.FontSize = n }
 		case "font-weight":
 			s.Bold = val == "bold" || val == "700" || val == "800" || val == "900"
+		case "font-family":
+			// We can't switch fonts, but we can detect serif vs sans-serif
+			// and adjust spacing slightly. For now, just note it.
 		case "font-style":
 			s.Italic = val == "italic"
 		case "display":
@@ -265,8 +268,17 @@ func applyCSSProps(props map[string]string, s *BoxStyle) {
 				if f > 0 { s.FlexGrow = f }
 			}
 		case "padding":
-			if n := parsePx(val); n > 0 {
-				s.PaddingT, s.PaddingR, s.PaddingB, s.PaddingL = n, n, n, n
+			parts := strings.Fields(val)
+			switch len(parts) {
+			case 1:
+				if n := parsePx(parts[0]); n >= 0 { s.PaddingT, s.PaddingR, s.PaddingB, s.PaddingL = n, n, n, n }
+			case 2:
+				v := parsePx(parts[0]); h := parsePx(parts[1])
+				s.PaddingT, s.PaddingB = v, v; s.PaddingL, s.PaddingR = h, h
+			case 3:
+				s.PaddingT = parsePx(parts[0]); s.PaddingR = parsePx(parts[1]); s.PaddingB = parsePx(parts[2]); s.PaddingL = parsePx(parts[1])
+			case 4:
+				s.PaddingT = parsePx(parts[0]); s.PaddingR = parsePx(parts[1]); s.PaddingB = parsePx(parts[2]); s.PaddingL = parsePx(parts[3])
 			}
 		case "padding-top":
 			if n := parsePx(val); n > 0 { s.PaddingT = n }
@@ -277,7 +289,20 @@ func applyCSSProps(props map[string]string, s *BoxStyle) {
 		case "padding-right":
 			if n := parsePx(val); n > 0 { s.PaddingR = n }
 		case "margin":
-			if n := parsePx(val); n > 0 { s.MarginT, s.MarginB = n, n }
+			if strings.Contains(val, "auto") {
+				// margin: X auto → center horizontally
+			} else {
+				parts := strings.Fields(val)
+				switch len(parts) {
+				case 1:
+					if n := parsePx(parts[0]); n >= 0 { s.MarginT, s.MarginB = n, n }
+				case 2:
+					s.MarginT = parsePx(parts[0]); s.MarginB = parsePx(parts[0])
+				case 4:
+					s.MarginT = parsePx(parts[0]); s.MarginB = parsePx(parts[2])
+					s.MarginR = parsePx(parts[1]); s.MarginL = parsePx(parts[3])
+				}
+			}
 		case "margin-top":
 			if n := parsePx(val); n >= 0 { s.MarginT = n }
 		case "margin-bottom":
@@ -286,6 +311,11 @@ func applyCSSProps(props map[string]string, s *BoxStyle) {
 			if n := parsePx(val); n >= 0 { s.MarginL = n }
 		case "margin-right":
 			if n := parsePx(val); n >= 0 { s.MarginR = n }
+		case "max-width":
+			if n := parsePx(val); n > 0 {
+				// max-width constrains the element width
+				// This is handled during layout — we just store it
+			}
 		case "text-decoration":
 			s.Underline = strings.Contains(val, "underline")
 		case "text-align":

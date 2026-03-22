@@ -99,6 +99,7 @@ func fontAscent(size int, bold bool) int {
 }
 
 // fontLineHeight returns the line height for a given font size.
+// Chrome's default line-height:normal is ~1.2x for most fonts.
 func fontLineHeight(size int) int {
-	return size * 14 / 10 // 1.4x line height
+	return size * 12 / 10
 }
