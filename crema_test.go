@@ -1159,3 +1159,173 @@ func TestRendering_DarkBgContrast(t *testing.T) {
 	root := Layout(p.Doc, 800, 400)
 	if root == nil { t.Fatal("no layout") }
 }
+
+func TestSite_AdultfolioLogin(t *testing.T) {
+	if testing.Short() { t.Skip() }
+	b := NewBrowser()
+	defer b.Close()
+	p := b.NewPage()
+	
+	// Navigate to main page
+	err := p.Navigate("https://www.adultfolio.com/")
+	if err != nil { t.Fatalf("nav error: %v", err) }
+	t.Logf("Title: %s", p.Title())
+	
+	// Find login/signin links
+	links := p.QuerySelectorAll("a")
+	for _, l := range links {
+		href := l.GetAttribute("href")
+		var sb strings.Builder
+		CollectTextFromElement(l, &sb)
+		text := strings.TrimSpace(sb.String())
+		if text == "" { continue }
+		lower := strings.ToLower(text)
+		if strings.Contains(lower, "sign") || strings.Contains(lower, "login") || strings.Contains(lower, "log in") || strings.Contains(lower, "register") {
+			t.Logf("Found: %q → %s", text, href)
+		}
+	}
+	
+	// Find forms
+	forms := p.QuerySelectorAll("form")
+	t.Logf("Forms found: %d", len(forms))
+	for i, form := range forms {
+		action := form.GetAttribute("action")
+		method := form.GetAttribute("method")
+		id := form.GetAttribute("id")
+		cls := form.GetAttribute("class")
+		t.Logf("  form[%d] id=%q class=%q action=%q method=%q", i, id, cls, action, method)
+		
+		// List inputs in form
+		inputs := QuerySelectorAll(&form.Node, "input")
+		for _, inp := range inputs {
+			t.Logf("    <input type=%q name=%q id=%q placeholder=%q>", 
+				inp.GetAttribute("type"), inp.GetAttribute("name"), inp.GetAttribute("id"), inp.GetAttribute("placeholder"))
+		}
+		buttons := QuerySelectorAll(&form.Node, "button")
+		for _, btn := range buttons {
+			var sb strings.Builder
+			CollectTextFromElement(btn, &sb)
+			t.Logf("    <button>%s</button>", strings.TrimSpace(sb.String()))
+		}
+	}
+	
+	// Find modals / dialogs
+	modals := p.QuerySelectorAll("[class*=modal]")
+	t.Logf("Modal elements: %d", len(modals))
+	dialogs := p.QuerySelectorAll("dialog")
+	t.Logf("Dialog elements: %d", len(dialogs))
+	
+	// Try to find login page directly
+	t.Log("\nTrying login page...")
+	p2 := b.NewPage()
+	err = p2.Navigate("https://www.adultfolio.com/login")
+	if err != nil {
+		t.Logf("Login page error: %v", err)
+	} else {
+		t.Logf("Login page title: %s", p2.Title())
+		forms2 := p2.QuerySelectorAll("form")
+		t.Logf("Login page forms: %d", len(forms2))
+		for i, form := range forms2 {
+			inputs := QuerySelectorAll(&form.Node, "input")
+			t.Logf("  form[%d]: %d inputs", i, len(inputs))
+			for _, inp := range inputs {
+				t.Logf("    <input type=%q name=%q placeholder=%q>",
+					inp.GetAttribute("type"), inp.GetAttribute("name"), inp.GetAttribute("placeholder"))
+			}
+		}
+		p2.ScreenshotFileSize("/tmp/crema_adultfolio_login.png", 1280, 900)
+		t.Log("Screenshot saved to /tmp/crema_adultfolio_login.png")
+	}
+	
+	// Also try signup
+	t.Log("\nTrying signup page...")
+	p3 := b.NewPage()
+	err = p3.Navigate("https://www.adultfolio.com/signup")
+	if err != nil {
+		// Try register
+		p3 = b.NewPage()
+		err = p3.Navigate("https://www.adultfolio.com/register")
+		if err != nil {
+			t.Logf("Signup page error: %v", err)
+		}
+	}
+	if err == nil {
+		t.Logf("Signup title: %s", p3.Title())
+		forms3 := p3.QuerySelectorAll("form")
+		t.Logf("Signup forms: %d", len(forms3))
+	}
+}
+
+func TestSite_AdultfolioModals(t *testing.T) {
+	if testing.Short() { t.Skip() }
+	b := NewBrowser()
+	defer b.Close()
+	p := b.NewPage()
+	p.Navigate("https://www.adultfolio.com/")
+	
+	// Check modals content
+	modals := p.QuerySelectorAll("[class*=modal]")
+	for i, m := range modals {
+		id := m.GetAttribute("id")
+		cls := m.GetAttribute("class")
+		inputs := QuerySelectorAll(&m.Node, "input")
+		var sb strings.Builder
+		CollectTextFromElement(m, &sb)
+		text := sb.String()
+		if len(text) > 100 { text = text[:100] }
+		t.Logf("modal[%d] id=%q class=%q inputs=%d text=%q", i, id, cls, len(inputs), text)
+	}
+	
+	// Try login.php
+	t.Log("\nTrying /login.php...")
+	p2 := b.NewPage()
+	p2.Navigate("https://www.adultfolio.com/login.php")
+	t.Logf("Title: %s", p2.Title())
+	
+	forms := p2.QuerySelectorAll("form")
+	t.Logf("Forms: %d", len(forms))
+	for i, form := range forms {
+		action := form.GetAttribute("action")
+		inputs := QuerySelectorAll(&form.Node, "input")
+		t.Logf("  form[%d] action=%q inputs=%d", i, action, len(inputs))
+		for _, inp := range inputs {
+			t.Logf("    type=%q name=%q", inp.GetAttribute("type"), inp.GetAttribute("name"))
+		}
+	}
+	
+	p2.ScreenshotFileSize("/tmp/crema_adultfolio_loginphp.png", 1280, 900)
+}
+
+func TestSite_AdultfolioSubmitLogin(t *testing.T) {
+	if testing.Short() { t.Skip() }
+	b := NewBrowser()
+	defer b.Close()
+	p := b.NewPage()
+	p.Navigate("https://www.adultfolio.com/login.php")
+	
+	// Fill the form via JS
+	p.VM.Run(`document.querySelector("input[name='username']").value = "testuser";`)
+	p.VM.Run(`document.querySelector("input[name='password']").value = "testpass";`)
+	
+	// Verify values are set
+	r1, _ := p.Eval(`document.querySelector("input[name='username']").value`)
+	r2, _ := p.Eval(`document.querySelector("input[name='password']").value`)
+	t.Logf("username=%q password=%q", r1.String(), r2.String())
+	
+	// Find the login form and submit it
+	form := p.QuerySelector("form[action='/login.php']")
+	if form == nil { t.Fatal("login form not found") }
+	
+	// Set values on the element attributes for form submission
+	usernameEl := QuerySelector(&form.Node, "input[name='username']")
+	passwordEl := QuerySelector(&form.Node, "input[name='password']")
+	if usernameEl != nil { usernameEl.SetAttribute("value", "testuser") }
+	if passwordEl != nil { passwordEl.SetAttribute("value", "testpass") }
+	
+	// Submit
+	err := p.SubmitForm(form)
+	if err != nil { t.Logf("submit error: %v", err) } else {
+		t.Logf("After submit: title=%q url=%s", p.Title(), p.URL)
+		t.Logf("Links on result page: %d", len(p.QuerySelectorAll("a")))
+	}
+}
