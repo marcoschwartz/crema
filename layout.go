@@ -152,7 +152,7 @@ func Layout(doc *Document, viewportW, viewportH int) *Box {
 		contentX = (viewportW - contentW) / 2
 	}
 
-	y := bodyPaddingY
+	y := 0 // Start at top — first child's margin provides the gap (margin collapsing)
 	layoutChildren(body, root, contentX, &y, contentW, viewportW)
 
 	// Adjust root height to content

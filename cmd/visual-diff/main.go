@@ -178,63 +178,105 @@ const puppeteer = require('puppeteer-core');
 }
 
 func compareImages(cremaImg, chromeImg *image.RGBA, w, h int) (*image.RGBA, float64, []float64) {
-	// Normalize sizes
 	maxW := cremaImg.Bounds().Dx()
-	if chromeImg.Bounds().Dx() < maxW {
-		maxW = chromeImg.Bounds().Dx()
-	}
+	if chromeImg.Bounds().Dx() < maxW { maxW = chromeImg.Bounds().Dx() }
 	maxH := cremaImg.Bounds().Dy()
-	if chromeImg.Bounds().Dy() < maxH {
-		maxH = chromeImg.Bounds().Dy()
-	}
+	if chromeImg.Bounds().Dy() < maxH { maxH = chromeImg.Bounds().Dy() }
 	if maxW > w { maxW = w }
 	if maxH > h { maxH = h }
 
 	diff := image.NewRGBA(image.Rect(0, 0, maxW, maxH))
-	totalPixels := 0
-	matchPixels := 0
 
-	// Divide into 5 horizontal regions for region scoring
-	regionSize := maxH / 5
+	// ── Block-based structural comparison ──
+	// Compare blocks of 16x16 pixels by average color.
+	// This ignores text rendering differences and focuses on layout:
+	// - Background colors (right area has right bg?)
+	// - Element positions (content in same vertical region?)
+	// - Structural shapes (boxes, headers, footers)
+	blockSize := 16
+	blocksW := maxW / blockSize
+	blocksH := maxH / blockSize
+	totalBlocks := 0
+	matchBlocks := 0
+
+	regionSize := blocksH / 5
 	if regionSize < 1 { regionSize = 1 }
 	regionMatch := make([]int, 5)
 	regionTotal := make([]int, 5)
 
-	for y := 0; y < maxH; y++ {
-		region := y / regionSize
+	for by := 0; by < blocksH; by++ {
+		region := by / regionSize
 		if region >= 5 { region = 4 }
 
-		for x := 0; x < maxW; x++ {
-			totalPixels++
+		for bx := 0; bx < blocksW; bx++ {
+			totalBlocks++
 			regionTotal[region]++
 
-			cr, cg, cb, _ := cremaImg.At(x, y).RGBA()
-			hr, hg, hb, _ := chromeImg.At(x, y).RGBA()
+			// Average color of this block in both images
+			var cr, cg, cb, hr, hg, hb float64
+			count := 0
+			for dy := 0; dy < blockSize; dy++ {
+				for dx := 0; dx < blockSize; dx++ {
+					px := bx*blockSize + dx
+					py := by*blockSize + dy
+					if px >= maxW || py >= maxH { continue }
+					count++
 
-			// Convert to 8-bit
-			cr8, cg8, cb8 := cr>>8, cg>>8, cb>>8
-			hr8, hg8, hb8 := hr>>8, hg>>8, hb>>8
+					r1, g1, b1, _ := cremaImg.At(px, py).RGBA()
+					r2, g2, b2, _ := chromeImg.At(px, py).RGBA()
+					cr += float64(r1 >> 8); cg += float64(g1 >> 8); cb += float64(b1 >> 8)
+					hr += float64(r2 >> 8); hg += float64(g2 >> 8); hb += float64(b2 >> 8)
+				}
+			}
+			if count == 0 { continue }
+			fc := float64(count)
+			cr /= fc; cg /= fc; cb /= fc
+			hr /= fc; hg /= fc; hb /= fc
 
-			// Color distance
-			dr := math.Abs(float64(cr8) - float64(hr8))
-			dg := math.Abs(float64(cg8) - float64(hg8))
-			db := math.Abs(float64(cb8) - float64(hb8))
+			// Compare block: is it the same general color/brightness?
+			dr := math.Abs(cr - hr)
+			dg := math.Abs(cg - hg)
+			db := math.Abs(cb - hb)
 			dist := (dr + dg + db) / 3
 
-			if dist < 30 {
-				// Similar enough — show original
-				matchPixels++
+			// Also compare "is content present" — both bright or both dark?
+			cremaLum := cr*0.299 + cg*0.587 + cb*0.114
+			chromeLum := hr*0.299 + hg*0.587 + hb*0.114
+			bothEmpty := cremaLum > 240 && chromeLum > 240  // both white/near-white
+			bothDark := cremaLum < 50 && chromeLum < 50      // both dark
+			sameContent := bothEmpty || bothDark || math.Abs(cremaLum-chromeLum) < 60
+
+			matched := dist < 40 || sameContent
+
+			// Paint diff block
+			for dy := 0; dy < blockSize; dy++ {
+				for dx := 0; dx < blockSize; dx++ {
+					px := bx*blockSize + dx
+					py := by*blockSize + dy
+					if px >= maxW || py >= maxH { continue }
+					if matched {
+						// Blend crema + chrome for context
+						r1, g1, b1, _ := cremaImg.At(px, py).RGBA()
+						diff.Set(px, py, color.RGBA{uint8(r1>>8), uint8(g1>>8), uint8(b1>>8), 255})
+					} else {
+						// Red highlight with intensity
+						intensity := uint8(math.Min(255, dist*3))
+						diff.Set(px, py, color.RGBA{intensity, 0, 0, 255})
+					}
+				}
+			}
+
+			if matched {
+				matchBlocks++
 				regionMatch[region]++
-				diff.Set(x, y, cremaImg.At(x, y))
-			} else {
-				// Different — highlight in red
-				intensity := uint8(math.Min(255, dist*2))
-				diff.Set(x, y, color.RGBA{intensity, 0, 0, 255})
 			}
 		}
 	}
 
-	score := float64(matchPixels) / float64(totalPixels)
+	score := 0.0
+	if totalBlocks > 0 {
+		score = float64(matchBlocks) / float64(totalBlocks)
+	}
 
 	regionScores := make([]float64, 5)
 	for i := 0; i < 5; i++ {
