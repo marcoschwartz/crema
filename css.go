@@ -405,20 +405,21 @@ func applyCSSProps(props map[string]string, s *BoxStyle) {
 			// max-width handled via layout
 		case "float":
 			if val == "left" || val == "right" {
-				// float:left = side-by-side layout, treat as inline
-				s.Display = "inline"
+				// float:left — keep as block. The parent will become flex
+				// if it detects float children. Don't set inline — that
+				// would bypass the flex layout path.
 			}
 		case "width":
 			if strings.HasSuffix(val, "%") {
 				pct := 0
-				fmt.Sscanf(val, "%d", &pct)
+				// Handle decimal percentages like 50%, 33.33%, 16.666%
+				var fpct float64
+				fmt.Sscanf(val, "%f", &fpct)
+				pct = int(fpct)
 				if pct > 0 && pct <= 100 {
-					// Convert percentage to flex-grow for flex containers
-					s.FlexGrow = float64(pct) / 100.0
+					s.WidthPct = pct
+					s.FlexGrow = fpct / 100.0
 				}
-			} else if n := parsePx(val); n > 0 {
-				// Fixed width — store as flex hint
-				_ = n
 			}
 		case "text-decoration":
 			s.Underline = strings.Contains(val, "underline")

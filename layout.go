@@ -29,6 +29,7 @@ type Box struct {
 
 // BoxStyle holds computed visual properties.
 type BoxStyle struct {
+	WidthPct   int    // width as percentage (0 = auto)
 	BGColor    Color
 	Color      Color
 	FontSize   int
@@ -858,7 +859,11 @@ func layoutFlexRow(items []flexChild, parent *Box, x int, y *int, availW int, ga
 
 	for i, item := range items {
 		w := item.minW
-		if totalGrow > 0 && item.grow > 0 {
+		// If element has an explicit width percentage, use it directly
+		if item.style.WidthPct > 0 {
+			w = availW * item.style.WidthPct / 100
+			if gap > 0 { w -= gap }
+		} else if totalGrow > 0 && item.grow > 0 {
 			w += int(float64(extraW) * item.grow / totalGrow)
 		}
 		h := item.minH
