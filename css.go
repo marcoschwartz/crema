@@ -401,6 +401,29 @@ func applyCSSProps(props map[string]string, s *BoxStyle) {
 			if n := parsePx(val); n >= 0 { s.MarginL = n }
 		case "margin-right":
 			if n := parsePx(val); n >= 0 { s.MarginR = n }
+		case "height":
+			if strings.HasSuffix(val, "vh") {
+				var vh float64
+				fmt.Sscanf(val, "%f", &vh)
+				if vh > 0 {
+					// Convert vh to approximate pixels (viewport height ~900)
+					h := int(vh * 900 / 100)
+					if h > 20 { s.PaddingB = max(s.PaddingB, h/3) }
+				}
+			} else if n := parsePx(val); n > 0 {
+				s.PaddingB = max(s.PaddingB, n/4)
+			}
+		case "min-height":
+			if strings.HasSuffix(val, "vh") {
+				var vh float64
+				fmt.Sscanf(val, "%f", &vh)
+				if vh > 0 {
+					h := int(vh * 900 / 100)
+					if h > 20 { s.PaddingB = max(s.PaddingB, h/3) }
+				}
+			} else if n := parsePx(val); n > 0 {
+				s.PaddingB = max(s.PaddingB, n/4)
+			}
 		case "max-width":
 			// max-width handled via layout
 		case "float":
@@ -410,12 +433,14 @@ func applyCSSProps(props map[string]string, s *BoxStyle) {
 				// would bypass the flex layout path.
 			}
 		case "width":
-			if strings.HasSuffix(val, "%") {
-				pct := 0
-				// Handle decimal percentages like 50%, 33.33%, 16.666%
+			if strings.HasSuffix(val, "vw") {
 				var fpct float64
 				fmt.Sscanf(val, "%f", &fpct)
-				pct = int(fpct)
+				if fpct > 0 { s.WidthPct = int(fpct) }
+			} else if strings.HasSuffix(val, "%") {
+				var fpct float64
+				fmt.Sscanf(val, "%f", &fpct)
+				pct := int(fpct)
 				if pct > 0 && pct <= 100 {
 					s.WidthPct = pct
 					s.FlexGrow = fpct / 100.0

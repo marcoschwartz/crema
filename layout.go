@@ -294,12 +294,21 @@ func layoutBlock(cel *Element, parent *Box, x int, y *int, availW int, viewportW
 		Style:   style,
 	}
 
-	// Full-width elements (nav, header, footer) span the viewport
-	if cel.TagName == "NAV" || cel.TagName == "HEADER" {
-		box.X = 0
-		box.Y = *y
-		box.W = viewportW
-	} else if cel.TagName == "FOOTER" {
+	// Full-width elements span the viewport
+	isFullWidth := cel.TagName == "NAV" || cel.TagName == "HEADER" || cel.TagName == "FOOTER"
+	// Elements with width:100vw or 100% CSS, or direct body children with bg color
+	if style.WidthPct >= 100 {
+		isFullWidth = true
+	}
+	// Direct body children with background color are typically full-width sections
+	if cel.Parent != nil {
+		if pel := nodeToElement(cel.Parent); pel != nil && pel.TagName == "BODY" {
+			if style.BGColor.A > 0 {
+				isFullWidth = true
+			}
+		}
+	}
+	if isFullWidth {
 		box.X = 0
 		box.Y = *y
 		box.W = viewportW
@@ -1368,6 +1377,16 @@ func computeStyle(el *Element, parent *Box) BoxStyle {
 					}
 				}
 			}
+			// Bootstrap responsive visibility (viewport 1280px = lg)
+			// xs: <768, sm: 768-991, md: 992-1199, lg: >=1200
+			if c == "hidden-lg" || c == "hidden-lg-up" { s.Hidden = true; s.Display = "none" }
+			if c == "visible-xs" || c == "visible-xs-block" || c == "visible-xs-inline" { s.Hidden = true; s.Display = "none" }
+			if c == "visible-sm" || c == "visible-sm-block" || c == "visible-sm-inline" { s.Hidden = true; s.Display = "none" }
+			if c == "visible-md" || c == "visible-md-block" || c == "visible-md-inline" { s.Hidden = true; s.Display = "none" }
+			// Bootstrap 4/5 responsive
+			if c == "d-lg-none" { s.Hidden = true; s.Display = "none" }
+			if c == "d-none" && !strings.Contains(cls, "d-lg-block") && !strings.Contains(cls, "d-lg-flex") { s.Hidden = true; s.Display = "none" }
+
 			// Flexbox utility classes (Tailwind, Bootstrap 5)
 			if c == "d-flex" || c == "flex" { s.Display = "flex"; s.FlexDirection = "row" }
 			if c == "d-none" || c == "hidden" { s.Hidden = true; s.Display = "none" }
